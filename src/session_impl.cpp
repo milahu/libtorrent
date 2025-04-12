@@ -331,7 +331,6 @@ void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 				bool const local
 					= ipface.interface_address.is_loopback()
 					|| is_link_local(ipface.interface_address)
-					|| (ipface.flags & if_flags::loopback)
 					|| (!is_global(ipface.interface_address)
 						&& !(ipface.flags & if_flags::pointopoint)
 						&& has_any_internet_route(routes)
