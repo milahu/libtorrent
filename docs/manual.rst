@@ -880,13 +880,17 @@ conditions are met:
 * the IP address is in a known link-local range
 * the IP address is in a known loopback range
 * the item the IP address was expanded from was marked local (``l``)
-* the network interface has the ``loopback`` flag set
 * NONE of the following conditions are met:
   1. the IP address is in a globally reachable IP address range
   2. the network interface has the ``point-to-point`` flag set
   3. the routing table contains a route for at least one global internet address
   (e.g. a default route) for the address family of the expanded IP that points to
   the network interface of the expanded IP.
+
+Note:
+Local interfaces like ``lo``
+can have assigned global addresses,
+so such addresses are also used.
 
 routing
 -------
