@@ -58,6 +58,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <type_traits>
 #include <numeric> // for accumulate
 
+#include <iostream>
+
 #if TORRENT_USE_INVARIANT_CHECKS
 #include <unordered_set>
 #endif
@@ -323,6 +325,17 @@ void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 				if (!(ipface.flags & if_flags::up))
 					continue;
 
+				std::cout << "\n";
+				std::cout << "session_impl.cpp: ipface.name = " << ipface.name << "\n";
+				std::cout << "session_impl.cpp: ipface.interface_address = " << ipface.interface_address << "\n";
+				std::cout << "session_impl.cpp: ipface.interface_address.is_loopback() = " << ipface.interface_address.is_loopback() << "\n";
+				std::cout << "session_impl.cpp: is_link_local(ipface.interface_address) = " << is_link_local(ipface.interface_address) << "\n";
+				std::cout << "session_impl.cpp: (ipface.flags & if_flags::loopback) = " << (ipface.flags & if_flags::loopback) << "\n";
+				std::cout << "session_impl.cpp: !is_global(ipface.interface_address) = " << !is_global(ipface.interface_address) << "\n";
+				std::cout << "session_impl.cpp: !(ipface.flags & if_flags::pointopoint) = " << !(ipface.flags & if_flags::pointopoint) << "\n";
+				std::cout << "session_impl.cpp: has_any_internet_route(routes) = " << has_any_internet_route(routes) << "\n";
+				std::cout << "session_impl.cpp: !has_internet_route(ipface.name, family(ipface.interface_address), routes) = " << !has_internet_route(ipface.name, family(ipface.interface_address), routes) << "\n";
+
 				// we assume this listen_socket_t is local-network under some
 				// conditions, meaning we won't announce it to internet trackers
 				// if "routes" does not contain a single route to the internet,
@@ -335,6 +348,9 @@ void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 						&& !(ipface.flags & if_flags::pointopoint)
 						&& has_any_internet_route(routes)
 						&& !has_internet_route(ipface.name, family(ipface.interface_address), routes));
+
+				std::cout << "session_impl.cpp: local = " << local << "\n";
+				std::cout << "\n";
 
 				eps.emplace_back(ipface.interface_address, uep.port, uep.device
 					, uep.ssl, uep.flags | listen_socket_t::was_expanded
