@@ -82,11 +82,16 @@ int main(int argc, char* argv[]) {
 
     // Restrict to specific interface and port if requested
     if (!bind_iface.empty()) {
-        std::string ip = get_iface_ip(bind_iface);
+        // no! bind_iface can be a device name (lo, eth0, ...) or an ip address (192.168.178.20, ...)
+        // let libtorrent do the resolving
+        // because a device name can have multiple ip addresses
+        // std::string ip = get_iface_ip(bind_iface);
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
-                     ip + ":" + std::to_string(listen_port));
+                     // ip + ":" + std::to_string(listen_port));
+                     bind_iface + ":" + std::to_string(listen_port));
         std::cout << "Binding DHT client to interface " << bind_iface
-                  << " (IP " << ip << ") on port " << listen_port << std::endl;
+                  // << " (IP " << ip << ") on port " << listen_port << std::endl;
+                  << " on port " << listen_port << std::endl;
     } else {
         // otherwise bind to all interfaces
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
