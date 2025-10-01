@@ -6,6 +6,7 @@
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/alert_types.hpp>
 #include <libtorrent/alert.hpp>
+#include <libtorrent/hex.hpp>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -18,6 +19,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <cstring>
+
+// https://linuxtracker.org/ # Top Torrents
+// https://linuxtracker.org/index.php?page=torrent-details&id=a9ae5333b345d9c66ed09e2f72eef639dec5ad1d
+// Linux mint 22 Cinnamon 64bit ISO
+#define DEFAULT_TEST_BTIH "a9ae5333b345d9c66ed09e2f72eef639dec5ad1d"
 
 // helper: resolve interface name to its first IPv4 address
 std::string get_iface_ip(const std::string& ifname) {
@@ -48,16 +54,24 @@ std::string get_iface_ip(const std::string& ifname) {
 }
 
 void print_help(const char* prog) {
-    std::cout << "Usage: " << prog << " [options]\n\n"
-              << "Options:\n"
-              << "  --help            Show this help text and exit\n"
-              << "  --bind <iface>    Bind to the given network interface (e.g. eth0)\n"
-              << "  --port <port>     Set listening port for TCP/UDP/DHT (default: 6881)\n";
+    std::cout
+        << "Usage: " << prog << " [options]\n\n"
+        << "Options:\n"
+        << "  --help             Show this help text and exit\n"
+        << "  --bind <iface>     Bind to the given network interface (e.g. eth0)\n"
+        << "  --port <port>      Set listening port for TCP/UDP/DHT (default: 6881)\n"
+        << "  --btih <btih>      Query the DHT for this torrent (default: " << DEFAULT_TEST_BTIH << ")\n"
+        << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 10)\n"
+        << "  --sleep-query <N>  Re-send the DHT query every N seconds (default: 30)\n"
+    ;
 }
 
 int main(int argc, char* argv[]) {
     std::string bind_iface;
     int listen_port = 6881; // default port
+    int sleep_print = 10;
+    int sleep_query = 30;
+    std::string test_btih = DEFAULT_TEST_BTIH;
 
     // parse command line
     for (int i = 1; i < argc; ++i) {
@@ -69,6 +83,17 @@ int main(int argc, char* argv[]) {
             bind_iface = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             listen_port = std::stoi(argv[++i]);
+        } else if (arg == "--btih" && i + 1 < argc) {
+            test_btih = argv[++i];
+        } else if (arg == "--sleep-print" && i + 1 < argc) {
+            sleep_print = std::stoi(argv[++i]);
+            if (sleep_print <= 0) {
+                std::cout << "error: sleep cannot be zero or less: " << sleep_print << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "error: unrecognized argument: " << arg << std::endl;
+            return 1;
         }
     }
 
@@ -80,6 +105,19 @@ int main(int argc, char* argv[]) {
     pack.set_bool(libtorrent::settings_pack::enable_natpmp, false);
     pack.set_bool(libtorrent::settings_pack::enable_dht, true);
 
+    // Add DHT routers
+    // TODO expose CLI option
+    pack.set_str(libtorrent::settings_pack::dht_bootstrap_nodes,
+        "router.bittorrent.com:6881,"
+        "router.utorrent.com:6881,"
+        "router.bitcomet.com:6881,"
+        "dht.transmissionbt.com:6881"
+    );
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::tm tm = *std::localtime(&now_c);
+
     // Restrict to specific interface and port if requested
     if (!bind_iface.empty()) {
         // no! bind_iface can be a device name (lo, eth0, ...) or an ip address (192.168.178.20, ...)
@@ -89,17 +127,25 @@ int main(int argc, char* argv[]) {
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
                      // ip + ":" + std::to_string(listen_port));
                      bind_iface + ":" + std::to_string(listen_port));
-        std::cout << "Binding DHT client to interface " << bind_iface
+        std::cout << std::put_time(&tm, "%F %T") << " Binding DHT client to interface " << bind_iface
                   // << " (IP " << ip << ") on port " << listen_port << std::endl;
                   << " on port " << listen_port << std::endl;
     } else {
         // otherwise bind to all interfaces
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
                      "0.0.0.0:" + std::to_string(listen_port));
-        std::cout << "Binding DHT client to all interfaces on port " << listen_port << std::endl;
+        std::cout << std::put_time(&tm, "%F %T") << " Binding DHT client to all interfaces on port " << listen_port << std::endl;
     }
 
     libtorrent::session ses{pack};
+
+    libtorrent::sha1_hash test_hash;
+    libtorrent::aux::from_hex(test_btih, test_hash.data());
+
+    // force DHT activity by sending queries
+    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT queries for btih " << test_btih << std::endl;
+    ses.dht_get_peers(test_hash);
+    auto last_dht_query = std::chrono::steady_clock::now();
 
     std::atomic<bool> running{true};
 
@@ -110,16 +156,18 @@ int main(int argc, char* argv[]) {
             ses.pop_alerts(&alerts);
             for (auto a : alerts) {
                 if (auto* ls = dynamic_cast<libtorrent::listen_succeeded_alert*>(a)) {
-                    std::cout << "Listening on: " << ls->address.to_string() << ":" << ls->port << std::endl;
+                    std::cout << std::put_time(&tm, "%F %T") << " Listening on: " << ls->address.to_string() << ":" << ls->port << std::endl;
                 } else if (auto* lf = dynamic_cast<libtorrent::listen_failed_alert*>(a)) {
-                    std::cerr << "Listen failed: " << lf->message() << std::endl;
+                    std::cerr << std::put_time(&tm, "%F %T") << " Listen failed: " << lf->message() << std::endl;
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
     });
 
-    std::cout << "DHT client running. DHT node count:" << std::endl;
+    std::cout << std::put_time(&tm, "%F %T")
+        << " DHT client running. Printing DHT node count every "
+        << sleep_print << " seconds" << std::endl;
 
     while (true) {
         ses.post_dht_stats(); // request DHT stats
@@ -133,6 +181,14 @@ int main(int argc, char* argv[]) {
                 for (auto const& b : st->routing_table) {
                     dht_nodes += b.num_nodes;
                 }
+            } else if (auto* lf = libtorrent::alert_cast<libtorrent::listen_failed_alert>(a)) {
+                std::cerr << "Failed to bind to "
+                        << lf->address.to_string() << ":" << lf->port
+                        << " - " << lf->message() << "\n";
+                return 1;
+            } else if (auto* ls = libtorrent::alert_cast<libtorrent::listen_succeeded_alert>(a)) {
+                std::cout << "Listening succeeded on "
+                        << ls->address.to_string() << ":" << ls->port << "\n";
             }
         }
 
@@ -142,7 +198,14 @@ int main(int argc, char* argv[]) {
 
         std::cout << std::put_time(&tm, "%F %T") << " DHT nodes: " << dht_nodes << std::endl;
 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // re-send DHT query every N seconds
+        auto now_steady = std::chrono::steady_clock::now();
+        if (now_steady - last_dht_query >= std::chrono::seconds(sleep_query)) {
+            ses.dht_get_peers(test_hash);
+            last_dht_query = now_steady;
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(sleep_print));
     }
 
     running = false;
