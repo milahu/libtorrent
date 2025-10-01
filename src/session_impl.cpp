@@ -295,35 +295,98 @@ void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 			, [](listen_endpoint_t const& ep) { return !ep.addr.is_unspecified(); });
 		std::vector<listen_endpoint_t> unspecified_eps(unspecified_begin, eps.end());
 		eps.erase(unspecified_begin, eps.end());
+		std::cout << "session_impl.cpp: expand_unspecified_address: ifs size: " << ifs.size() << "\n";
+		std::cout << "session_impl.cpp: expand_unspecified_address: routes size: " << routes.size() << "\n";
+		std::cout << "session_impl.cpp: expand_unspecified_address: eps size: " << eps.size() << "\n";
+		std::cout << "session_impl.cpp: expand_unspecified_address: unspecified_eps size: " << unspecified_eps.size() << "\n";
+		for (auto const& ep : eps)
+		{
+			std::cout << "session_impl.cpp: ep:";
+			// the "lo" interface has (ep.device.empty() == true)
+			if (!ep.device.empty())
+				std::cout << " ep.device=" << ep.device;
+			else
+				std::cout << " ep.device=(empty)";
+			// the "lo" interface has (ep.addr.is_unspecified() == 0)
+			// meaning "the address is unspecified"
+			std::cout << " ep.addr.is_unspecified=" << ep.addr.is_unspecified();
+			std::cout << "\n";
+		}
 		for (auto const& uep : unspecified_eps)
 		{
 			bool const v4 = uep.addr.is_v4();
+			std::cout << "session_impl.cpp: expand_unspecified_address: uep.addr.is_v4: " << v4 << "\n";
 			for (auto const& ipface : ifs)
 			{
-				if (!ipface.preferred)
-					continue;
+				std::cout << "session_impl.cpp: ipface.name: " << ipface.name << "\n";
+				// if (!ipface.preferred)
+				// 	std::cout << "session_impl.cpp: ipface is not preferred: " << ipface.name << " -> ignoring\n";
+				// if (!ipface.preferred)
+				// 	continue;
+                // allow loopback interfaces even if they are not marked 'preferred'
+                if (!ipface.preferred && !(ipface.flags & if_flags::loopback))
+                {
+                    std::cout << "session_impl.cpp: ipface is not preferred: " << ipface.name << " -> ignoring\n";
+                    continue;
+                }
 				if (ipface.interface_address.is_v4() != v4)
-					continue;
-				if (!uep.device.empty() && uep.device != ipface.name)
-					continue;
-				if (std::any_of(eps.begin(), eps.end(), [&](listen_endpoint_t const& e)
 				{
-					// ignore device name because we don't want to create
-					// duplicates if the user explicitly configured an address
-					// without a device name
-					return e.addr == ipface.interface_address
-						&& e.port == uep.port
-						&& e.ssl == uep.ssl;
-				}))
-				{
+					std::cout << "session_impl.cpp: ipface is not ipv4: " << ipface.name << " -> ignoring\n";
 					continue;
 				}
-
+				if (!uep.device.empty() && uep.device != ipface.name)
+				{
+					std::cout << "session_impl.cpp: uep.device != ipface.name: " << ipface.name << " -> ignoring\n";
+					continue;
+				}
+				// if (std::any_of(eps.begin(), eps.end(), [&](listen_endpoint_t const& e)
+				// {
+				// 	// ignore device name because we don't want to create
+				// 	// duplicates if the user explicitly configured an address
+				// 	// without a device name
+				// 	return e.addr == ipface.interface_address
+				// 		&& e.port == uep.port
+				// 		&& e.ssl == uep.ssl;
+				// }))
+				// {
+				// 	std::cout << "session_impl.cpp: duplicate ipface: " << ipface.name << " -> ignoring\n";
+				// }
+				// if (std::any_of(eps.begin(), eps.end(), [&](listen_endpoint_t const& e)
+				// {
+				// 	// ignore device name because we don't want to create
+				// 	// duplicates if the user explicitly configured an address
+				// 	// without a device name
+				// 	return e.addr == ipface.interface_address
+				// 		&& e.port == uep.port
+				// 		&& e.ssl == uep.ssl;
+				// }))
+				// {
+				// 	continue;
+				// }
+                if (std::any_of(eps.begin(), eps.end(), [&](listen_endpoint_t const& e)
+                {
+                    // ignore device name because we don't want to create
+                    // duplicates if the user explicitly configured an address
+                    // without a device name
+                    return e.addr == ipface.interface_address
+                        && e.port == uep.port
+                        && e.ssl == uep.ssl;
+                }))
+                {
+                    std::cout << "session_impl.cpp: duplicate ipface: " << ipface.name << " -> ignoring\n";
+                    continue;
+                }
 				// ignore interfaces that are down
 				if (ipface.state != if_state::up && ipface.state != if_state::unknown)
+				{
+                    std::cout << "session_impl.cpp: ipface.state down: " << ipface.name << " -> ignoring\n";
 					continue;
+				}
 				if (!(ipface.flags & if_flags::up))
+				{
+                    std::cout << "session_impl.cpp: ipface.flags down: " << ipface.name << " -> ignoring\n";
 					continue;
+				}
 
 				std::cout << "\n";
 				std::cout << "session_impl.cpp: ipface.name = " << ipface.name << "\n";
@@ -336,18 +399,30 @@ void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 				std::cout << "session_impl.cpp: has_any_internet_route(routes) = " << has_any_internet_route(routes) << "\n";
 				std::cout << "session_impl.cpp: !has_internet_route(ipface.name, family(ipface.interface_address), routes) = " << !has_internet_route(ipface.name, family(ipface.interface_address), routes) << "\n";
 
-				// we assume this listen_socket_t is local-network under some
-				// conditions, meaning we won't announce it to internet trackers
-				// if "routes" does not contain a single route to the internet,
-				// we don't use the last case. On MacOS, we can be notified of
-				// network changes *before* the routing table is updated
-				bool const local
-					= ipface.interface_address.is_loopback()
-					|| is_link_local(ipface.interface_address)
-					|| (!is_global(ipface.interface_address)
-						&& !(ipface.flags & if_flags::pointopoint)
-						&& has_any_internet_route(routes)
-						&& !has_internet_route(ipface.name, family(ipface.interface_address), routes));
+				// // we assume this listen_socket_t is local-network under some
+				// // conditions, meaning we won't announce it to internet trackers
+				// // if "routes" does not contain a single route to the internet,
+				// // we don't use the last case. On MacOS, we can be notified of
+				// // network changes *before* the routing table is updated
+				// bool const local
+				// 	= ipface.interface_address.is_loopback()
+				// 	|| is_link_local(ipface.interface_address)
+				// 	|| (!is_global(ipface.interface_address)
+				// 		&& !(ipface.flags & if_flags::pointopoint)
+				// 		&& has_any_internet_route(routes)
+				// 		&& !has_internet_route(ipface.name, family(ipface.interface_address), routes));
+                // we assume this listen_socket_t is local-network under some
+                // conditions. Use the interface flag for loopback, because the
+                // interface may be the loopback device while the address itself
+                // is a public IP (this is the case on some VPS setups).
+                bool const local
+                    = (ipface.flags & if_flags::loopback)
+                    || ipface.interface_address.is_loopback()
+                    || is_link_local(ipface.interface_address)
+                    || (!is_global(ipface.interface_address)
+                        && !(ipface.flags & if_flags::pointopoint)
+                        && has_any_internet_route(routes)
+                        && !has_internet_route(ipface.name, family(ipface.interface_address), routes));
 
 				std::cout << "session_impl.cpp: local = " << local << "\n";
 				std::cout << "\n";
@@ -2024,8 +2099,17 @@ namespace {
 		// First, check to see if it's an IP address
 		error_code err;
 		address const adr = make_address(iface.device.c_str(), err);
-		if (!err)
-		{
+		if (!err) {
+			// find if this address belongs to an interface
+			for (auto const& ipface : ifs) {
+				if (ipface.interface_address == adr) {
+					std::cout << "interface_to_endpoints: binding to IP address " << adr << " on interface " << ipface.name << "\n";
+					eps.emplace_back(adr, iface.port, ipface.name, ssl, flags);
+					return;
+				}
+			}
+			// fallback: no matching iface, use empty device
+			std::cout << "interface_to_endpoints: binding to IP address " << adr << " on interface (empty)\n";
 			eps.emplace_back(adr, iface.port, std::string{}, ssl, flags);
 		}
 		else
@@ -2039,11 +2123,19 @@ namespace {
 				// we're looking for a specific interface, and its address
 				// (which must be of the same family as the address we're
 				// connecting to)
+				// if (iface.device != ipface.name)
+				// 	std::cout << "interface_to_endpoints: skipping interface: iface.device=" << iface.device << " != ipface.name=" << ipface.name << "\n";
 				if (iface.device != ipface.name) continue;
 
 				bool const local = iface.local
 					|| ipface.interface_address.is_loopback()
 					|| is_link_local(ipface.interface_address);
+
+				std::cout << "interface_to_endpoints: binding to interface:"
+					<< " iface.device=" << iface.device
+					<< " ipface.interface_address=" << ipface.interface_address
+					<< " local=" << local
+					<< "\n";
 
 				eps.emplace_back(ipface.interface_address, iface.port, iface.device
 					, ssl, flags | (local ? listen_socket_t::local_network : listen_socket_flags_t{}));
