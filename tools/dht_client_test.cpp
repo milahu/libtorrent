@@ -61,7 +61,7 @@ void print_help(const char* prog) {
         << "  --bind <iface>     Bind to the given network interface (e.g. eth0)\n"
         << "  --port <port>      Set listening port for TCP/UDP/DHT (default: 6881)\n"
         << "  --btih <btih>      Query the DHT for this torrent (default: " << DEFAULT_TEST_BTIH << ")\n"
-        << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 10)\n"
+        << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 1)\n"
         << "  --sleep-query <N>  Re-send the DHT query every N seconds (default: 30)\n"
     ;
 }
@@ -69,7 +69,7 @@ void print_help(const char* prog) {
 int main(int argc, char* argv[]) {
     std::string bind_iface;
     int listen_port = 6881; // default port
-    int sleep_print = 10;
+    int sleep_print = 1;
     int sleep_query = 30;
     std::string test_btih = DEFAULT_TEST_BTIH;
 
@@ -104,6 +104,15 @@ int main(int argc, char* argv[]) {
     pack.set_bool(libtorrent::settings_pack::enable_upnp, false);
     pack.set_bool(libtorrent::settings_pack::enable_natpmp, false);
     pack.set_bool(libtorrent::settings_pack::enable_dht, true);
+
+    // enable alerts
+    pack.set_int(libtorrent::settings_pack::alert_mask,
+        libtorrent::alert_category::dht |
+        libtorrent::alert_category::status |
+        libtorrent::alert_category::error |
+        libtorrent::alert_category::stats |
+        libtorrent::alert_category::all
+    );
 
     // Add DHT routers
     // TODO expose CLI option
@@ -143,33 +152,22 @@ int main(int argc, char* argv[]) {
     libtorrent::aux::from_hex(test_btih, test_hash.data());
 
     // force DHT activity by sending queries
-    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT queries for btih " << test_btih << std::endl;
+    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << test_btih << " every " << sleep_query << " seconds" << std::endl;
     ses.dht_get_peers(test_hash);
     auto last_dht_query = std::chrono::steady_clock::now();
-
-    std::atomic<bool> running{true};
-
-    // Alert handling thread
-    std::thread alert_thread([&]{
-        while (running.load()) {
-            std::vector<libtorrent::alert*> alerts;
-            ses.pop_alerts(&alerts);
-            for (auto a : alerts) {
-                if (auto* ls = dynamic_cast<libtorrent::listen_succeeded_alert*>(a)) {
-                    std::cout << std::put_time(&tm, "%F %T") << " Listening on: " << ls->address.to_string() << ":" << ls->port << std::endl;
-                } else if (auto* lf = dynamic_cast<libtorrent::listen_failed_alert*>(a)) {
-                    std::cerr << std::put_time(&tm, "%F %T") << " Listen failed: " << lf->message() << std::endl;
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-    });
 
     std::cout << std::put_time(&tm, "%F %T")
         << " DHT client running. Printing DHT node count every "
         << sleep_print << " seconds" << std::endl;
 
+    static auto start_time = std::chrono::steady_clock::now();
+
     while (true) {
+
+        auto now = std::chrono::system_clock::now();
+        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+        std::tm tm = *std::localtime(&now_c);
+
         ses.post_dht_stats(); // request DHT stats
 
         std::vector<libtorrent::alert*> alerts;
@@ -177,26 +175,32 @@ int main(int argc, char* argv[]) {
 
         int dht_nodes = 0;
         for (auto a : alerts) {
-            if (auto* st = dynamic_cast<libtorrent::dht_stats_alert*>(a)) {
-                for (auto const& b : st->routing_table) {
-                    dht_nodes += b.num_nodes;
+            if (auto* st = libtorrent::alert_cast<libtorrent::dht_stats_alert>(a)) {
+                for (auto const& bucket : st->routing_table) {
+                    dht_nodes += bucket.num_nodes;
                 }
+            // } else if (auto* s = libtorrent::alert_cast<libtorrent::session_stats_alert>(a)) {
             } else if (auto* lf = libtorrent::alert_cast<libtorrent::listen_failed_alert>(a)) {
-                std::cerr << "Failed to bind to "
+                std::cerr << std::put_time(&tm, "%F %T") << " Failed to bind to "
                         << lf->address.to_string() << ":" << lf->port
                         << " - " << lf->message() << "\n";
                 return 1;
             } else if (auto* ls = libtorrent::alert_cast<libtorrent::listen_succeeded_alert>(a)) {
-                std::cout << "Listening succeeded on "
+                // TODO why is this printed two times? for TCP and UDP?
+                std::cout << std::put_time(&tm, "%F %T") << " Listening succeeded on "
                         << ls->address.to_string() << ":" << ls->port << "\n";
             }
         }
 
-        auto now = std::chrono::system_clock::now();
-        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-        std::tm tm = *std::localtime(&now_c);
+        // std::cout << std::put_time(&tm, "%F %T") << " DHT nodes: " << dht_nodes << std::endl;
 
-        std::cout << std::put_time(&tm, "%F %T") << " DHT nodes: " << dht_nodes << std::endl;
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() - start_time).count();
+
+        std::cout << std::put_time(&tm, "%F %T")
+                << " connected to " << dht_nodes
+                << " DHT nodes after " << elapsed << " seconds"
+                << std::endl;
 
         // re-send DHT query every N seconds
         auto now_steady = std::chrono::steady_clock::now();
@@ -207,9 +211,6 @@ int main(int argc, char* argv[]) {
 
         std::this_thread::sleep_for(std::chrono::seconds(sleep_print));
     }
-
-    running = false;
-    alert_thread.join();
 
     return 0;
 }
