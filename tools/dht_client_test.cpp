@@ -175,6 +175,8 @@ int main(int argc, char* argv[]) {
 
         int dht_nodes = 0;
         for (auto a : alerts) {
+            #if false
+            // N ifs for N alert types are slower than a switch statement (lookup table)
             if (auto* st = libtorrent::alert_cast<libtorrent::dht_stats_alert>(a)) {
                 for (auto const& bucket : st->routing_table) {
                     dht_nodes += bucket.num_nodes;
@@ -190,6 +192,33 @@ int main(int argc, char* argv[]) {
                 std::cout << std::put_time(&tm, "%F %T") << " Listening succeeded on "
                         << ls->address.to_string() << ":" << ls->port << "\n";
             }
+            #else
+            switch (a->type()) {
+                case libtorrent::dht_stats_alert::alert_type: {
+                    auto* st = libtorrent::alert_cast<libtorrent::dht_stats_alert>(a);
+                    for (auto const& bucket : st->routing_table) {
+                        dht_nodes += bucket.num_nodes;
+                    }
+                    break;
+                }
+                case libtorrent::listen_failed_alert::alert_type: {
+                    auto* lf = libtorrent::alert_cast<libtorrent::listen_failed_alert>(a);
+                    std::cerr << std::put_time(&tm, "%F %T") << " Failed to bind to "
+                            << lf->address.to_string() << ":" << lf->port
+                            << " - " << lf->message() << "\n";
+                    return 1;
+                    break;
+                }
+                case libtorrent::listen_succeeded_alert::alert_type: {
+                    auto* ls = libtorrent::alert_cast<libtorrent::listen_succeeded_alert>(a);
+                    // TODO why is this printed two times? for TCP and UDP?
+                    std::cout << std::put_time(&tm, "%F %T") << " Listening succeeded on "
+                            << ls->address.to_string() << ":" << ls->port << "\n";
+                    break;
+                }
+
+            }
+            #endif
         }
 
         // std::cout << std::put_time(&tm, "%F %T") << " DHT nodes: " << dht_nodes << std::endl;
