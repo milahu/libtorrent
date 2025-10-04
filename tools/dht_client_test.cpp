@@ -63,6 +63,8 @@ void print_help(const char* prog) {
         << "  --btih <btih>      Query the DHT for this torrent (default: " << DEFAULT_TEST_BTIH << ")\n"
         << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 1)\n"
         << "  --sleep-query <N>  Re-send the DHT query every N seconds (default: 30)\n"
+        << "  --stop-nodes <N>   Stop when connected to at least N DHT nodes (default: 0)\n"
+        << "  --stop-time <N>    Stop after N seconds (default: 0)\n"
     ;
 }
 
@@ -71,6 +73,8 @@ int main(int argc, char* argv[]) {
     int listen_port = 6881; // default port
     int sleep_print = 1;
     int sleep_query = 30;
+    int stop_nodes = 0;
+    int stop_time = 0;
     std::string test_btih = DEFAULT_TEST_BTIH;
 
     // parse command line
@@ -88,7 +92,25 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--sleep-print" && i + 1 < argc) {
             sleep_print = std::stoi(argv[++i]);
             if (sleep_print <= 0) {
-                std::cout << "error: sleep cannot be zero or less: " << sleep_print << std::endl;
+                std::cout << "error: sleep-print cannot be zero or less: " << sleep_print << std::endl;
+                return 1;
+            }
+        } else if (arg == "--sleep-query" && i + 1 < argc) {
+            sleep_query = std::stoi(argv[++i]);
+            if (sleep_query <= 0) {
+                std::cout << "error: sleep-query cannot be zero or less: " << sleep_query << std::endl;
+                return 1;
+            }
+        } else if (arg == "--stop-nodes" && i + 1 < argc) {
+            stop_nodes = std::stoi(argv[++i]);
+            if (stop_nodes < 0) {
+                std::cout << "error: stop-nodes cannot be less than zero: " << stop_nodes << std::endl;
+                return 1;
+            }
+        } else if (arg == "--stop-time" && i + 1 < argc) {
+            stop_time = std::stoi(argv[++i]);
+            if (stop_time < 0) {
+                std::cout << "error: stop-time cannot be less than zero: " << stop_time << std::endl;
                 return 1;
             }
         } else {
@@ -231,6 +253,20 @@ int main(int argc, char* argv[]) {
                 << " connected to " << dht_nodes
                 << " DHT nodes after " << elapsed << " seconds"
                 << std::endl;
+
+        if (stop_time > 0 && elapsed >= stop_time) {
+            std::cout << std::put_time(&tm, "%F %T")
+                    << " Stopping after " << stop_time << " seconds"
+                    << std::endl;
+            return 0;
+        }
+
+        if (stop_nodes > 0 && dht_nodes >= stop_nodes) {
+            std::cout << std::put_time(&tm, "%F %T")
+                    << " Stopping with " << stop_nodes << " or more DHT nodes"
+                    << std::endl;
+            return 0;
+        }
 
         // re-send DHT query every N seconds
         auto now_steady = std::chrono::steady_clock::now();
