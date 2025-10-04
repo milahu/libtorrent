@@ -255,10 +255,13 @@ int main(int argc, char* argv[]) {
                 << std::endl;
 
         if (stop_time > 0 && elapsed >= stop_time) {
+            // return 1 if no DHT nodes are connected
+            int return_code = (dht_nodes == 0) ? 1 : 0;
             std::cout << std::put_time(&tm, "%F %T")
                     << " Stopping after " << stop_time << " seconds"
+                    << " with " << dht_nodes << " DHT nodes -> return " << return_code
                     << std::endl;
-            return 0;
+            return return_code;
         }
 
         if (stop_nodes > 0 && dht_nodes >= stop_nodes) {
