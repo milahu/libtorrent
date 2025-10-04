@@ -227,16 +227,16 @@ int main(int argc, char* argv[]) {
                     auto* log = libtorrent::alert_cast<libtorrent::log_alert>(a);
                     if (log) {
                         if (log->category() & libtorrent::alert_category::session_log) {
-                            std::cout << "[session] " << log->message() << std::endl;
+                            std::cout << std::put_time(&tm, "%F %T") << " [session] " << log->message() << std::endl;
                         }
                         else if (log->category() & libtorrent::alert_category::dht_log) {
-                            std::cout << "[dht] " << log->message() << std::endl;
+                            std::cout << std::put_time(&tm, "%F %T") << " [dht] " << log->message() << std::endl;
                         }
                         else if (log->category() & libtorrent::alert_category::port_mapping_log) {
-                            std::cout << "[portmap] " << log->message() << std::endl;
+                            std::cout << std::put_time(&tm, "%F %T") << " [portmap] " << log->message() << std::endl;
                         }
                         else {
-                            std::cout << "[other] " << log->message() << std::endl;
+                            std::cout << std::put_time(&tm, "%F %T") << " [other] " << log->message() << std::endl;
                         }
                     }
                     break;
