@@ -46,6 +46,11 @@ namespace libtorrent { namespace aux {
 
 #if defined SO_BINDTODEVICE
 
+	inline int get_bind_device_version()
+	{
+		return 1;
+	}
+
 	struct bind_to_device
 	{
 		explicit bind_to_device(char const* device): m_value(device) {}
@@ -70,6 +75,11 @@ namespace libtorrent { namespace aux {
 #define TORRENT_HAS_BINDTODEVICE 1
 
 #elif defined IP_BOUND_IF
+
+	inline int get_bind_device_version()
+	{
+		return 2;
+	}
 
 	struct bind_to_device
 	{
@@ -101,6 +111,11 @@ namespace libtorrent { namespace aux {
 #define TORRENT_HAS_BINDTODEVICE 1
 
 #elif defined IP_FORCE_OUT_IFP
+
+	inline int get_bind_device_version()
+	{
+		return 3;
+	}
 
 	struct bind_to_device
 	{

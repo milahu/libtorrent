@@ -101,7 +101,8 @@ namespace aux { struct alert_manager; }
 		void send(udp::endpoint const& ep, span<char const> p
 			, error_code& ec, udp_send_flags_t flags = {});
 		void open(udp const& protocol, error_code& ec);
-		void bind(udp::endpoint const& ep, error_code& ec);
+		// void bind(udp::endpoint const& ep, error_code& ec);
+		void bind(udp::endpoint const& ep, error_code& ec, std::string const& device_name);
 		void close();
 		int local_port() const { return m_bind_port; }
 

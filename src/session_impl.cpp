@@ -210,6 +210,27 @@ namespace aux {
 	constexpr ip_source_t session_interface::source_tracker;
 	constexpr ip_source_t session_interface::source_router;
 
+
+
+    std::string sockaddr_to_string(boost::asio::ip::tcp::socket const* /*unused*/) { return {}; }
+
+    template <typename Socket>
+    std::string print_local_sockname(Socket& s)
+    {
+        try {
+            boost::system::error_code ec;
+            auto local_ep = s.local_endpoint(ec);
+            if (ec) return std::string("getsockname failed: ") + ec.message();
+            std::ostringstream os;
+            os << local_ep.address().to_string() << ":" << local_ep.port();
+            return os.str();
+        } catch (std::exception const& e) {
+            return std::string("exception: ") + e.what();
+        }
+    }
+
+
+
 void apply_deprecated_dht_settings(settings_pack& sett, bdecode_node const& s)
 {
 	bdecode_node val;
@@ -1683,6 +1704,7 @@ namespace {
 		}
 		else
 		{
+			std::cout << "apply_settings_pack_impl: reopen_listen_sockets();\n";
 			reopen_listen_sockets();
 		}
 
@@ -1806,8 +1828,32 @@ namespace {
 			{
 				// we have an actual device we're interested in listening on, if we
 				// have SO_BINDTODEVICE functionality, use it now.
-#if TORRENT_HAS_BINDTODEVICE
-				bind_device(*ret->sock, lep.device.c_str(), ec);
+				switch (get_bind_device_version()) {
+					case 1: {
+						std::cout << "session_impl::setup_listener: SO_BINDTODEVICE=1 -> bind_device version 1\n";
+						break;
+					}
+					case 2: {
+						std::cout << "session_impl::setup_listener: IP_BOUND_IF=1 -> bind_device version 2\n";
+						break;
+					}
+					case 3: {
+						std::cout << "session_impl::setup_listener: IP_FORCE_OUT_IFP=1 -> bind_device version 3\n";
+						break;
+					}
+				}
+				#if TORRENT_HAS_BINDTODEVICE
+				// bind_device(*ret->sock, lep.device.c_str(), ec);
+				// skip SO_BINDTODEVICE if we're binding to a global IP on lo
+				if (!(lep.device == "lo" && is_global(lep.addr)))
+				{
+					session_log("TORRENT_HAS_BINDTODEVICE=1 -> binding to device %s", lep.device.c_str());
+					bind_device(*ret->sock, lep.device.c_str(), ec);
+				}
+				else
+				{
+					session_log("SKIP SO_BINDTODEVICE for lo + global address %s", lep.addr.to_string().c_str());
+				}
 #ifndef TORRENT_DISABLE_LOGGING
 				if (ec && should_log())
 				{
@@ -1816,6 +1862,8 @@ namespace {
 				}
 #endif // TORRENT_DISABLE_LOGGING
 				ec.clear();
+#else
+				session_log("TORRENT_HAS_BINDTODEVICE=0 -> not binding to device %s", lep.device.c_str());
 #endif // TORRENT_HAS_BINDTODEVICE
 			}
 
@@ -1893,6 +1941,11 @@ namespace {
 				}
 				return ret;
 			}
+			else
+			{
+				// after ret->sock->bind(bind_ep, ec) has completed successfully
+				std::cout << "bind_debug: after bind TCP local endpoint = " << print_local_sockname(*ret->sock) << " (lep.device='" << lep.device << "')\n";
+			}
 
 			TORRENT_ASSERT(ret->local_endpoint.port() == bind_ep.port()
 				|| bind_ep.port() == 0);
@@ -1945,6 +1998,9 @@ namespace {
 
 			return ret;
 		}
+		// std::cerr << "[debug] udp_sock local endpoint = "
+		// 	<< ret->udp_sock->sock.local_endpoint(ec)
+		// 	<< " ec=" << ec.message() << std::endl;
 
 #if TORRENT_HAS_BINDTODEVICE
 		if (!lep.device.empty())
@@ -1960,7 +2016,8 @@ namespace {
 			ec.clear();
 		}
 #endif
-		ret->udp_sock->sock.bind(udp_bind_ep, ec);
+		// ret->udp_sock->sock.bind(udp_bind_ep, ec);
+		ret->udp_sock->sock.bind(udp_bind_ep, ec, lep.device);
 
 		while (ec == error_code(error::address_in_use) && retries > 0)
 		{
@@ -1979,7 +2036,8 @@ namespace {
 			ec.clear();
 			--retries;
 			udp_bind_ep.port(udp_bind_ep.port() + 1);
-			ret->udp_sock->sock.bind(udp_bind_ep, ec);
+			// ret->udp_sock->sock.bind(udp_bind_ep, ec);
+			ret->udp_sock->sock.bind(udp_bind_ep, ec, lep.device);
 		}
 
 		if (ec == error_code(error::address_in_use)
@@ -1989,7 +2047,8 @@ namespace {
 			// instead of giving up, try let the OS pick a port
 			udp_bind_ep.port(0);
 			ec.clear();
-			ret->udp_sock->sock.bind(udp_bind_ep, ec);
+			// ret->udp_sock->sock.bind(udp_bind_ep, ec);
+			ret->udp_sock->sock.bind(udp_bind_ep, ec, lep.device);
 		}
 
 		last_op = operation_t::sock_bind;
@@ -2009,6 +2068,12 @@ namespace {
 
 			return ret;
 		}
+		else {
+			std::cout << "bind_debug: after bind UDP local endpoint = " << print_local_sockname(ret->udp_sock->sock) << " (lep.device='" << lep.device << "')\n";
+
+			// std::cout << "ret->udp_sock->sock.update_endpoint();\n";
+			// ret->udp_sock->update_endpoint();
+		}
 
 		// if we did not open a TCP listen socket, ret->local_endpoint was never
 		// initialized, so do that now, based on the UDP socket
@@ -2019,6 +2084,30 @@ namespace {
 		}
 
 		ret->device = lep.device;
+
+
+		// no. cannot set ret->udp_external_port etc
+
+		// // After binding UDP socket (inside setup_listener or right after you create ret->udp_sock)
+		// boost::system::error_code lec;
+		// auto _lep = ret->udp_sock->sock.local_endpoint(lec);
+		// if (!lec)
+		// {
+		// 	std::cerr << "[debug] udp_sock local endpoint after bind: "
+		// 			<< _lep.address().to_string() << ":" << _lep.port()
+		// 			<< " (device='" << _lep.device << "')" << std::endl;
+
+		// 	// Update the listen socket bookkeeping with the actual port
+		// 	ret->udp_external_port = _lep.port();
+		// 	ret->udp_local_port = _lep.port();
+		// }
+		// else
+		// {
+		// 	std::cerr << "[debug] udp_sock.local_endpoint() failed: "
+		// 			<< lec.message() << std::endl;
+		// }
+
+
 
 		error_code err;
 		set_socket_buffer_size(ret->udp_sock->sock, m_settings, err);
@@ -2131,14 +2220,47 @@ namespace {
 					|| ipface.interface_address.is_loopback()
 					|| is_link_local(ipface.interface_address);
 
+				// eps.emplace_back(ipface.interface_address, iface.port, iface.device
+				// 	, ssl, flags | (local ? listen_socket_t::local_network : listen_socket_flags_t{}));
+
+				// FIXME This assumes binding the address without SO_BINDTODEVICE succeeds on the kernel
+				// (it usually does if the IP is assigned to the host).
+				// If the kernel refuses to bind without SO_BINDTODEVICE,
+				// we need the more complex approach:
+				// use connect() for outbound
+				// or use IP_PKTINFO to set the outgoing interface for bootstrap packets.
+
+				// If this interface is the loopback device but the address is global,
+				// avoid setting the device field. Binding the socket to device "lo"
+				// can force outbound packets to stay on lo and break DHT bootstrap.
+				std::string device_used;
+				if ((ipface.flags & if_flags::loopback) && !ipface.interface_address.is_loopback())
+				{
+					// leave empty so no SO_BINDTODEVICE is used
+					device_used = std::string{};
+				}
+				else
+				{
+					device_used = iface.device;
+				}
+
 				std::cout << "interface_to_endpoints: binding to interface:"
 					<< " iface.device=" << iface.device
+					<< " device_used=" << device_used
 					<< " ipface.interface_address=" << ipface.interface_address
 					<< " local=" << local
 					<< "\n";
 
-				eps.emplace_back(ipface.interface_address, iface.port, iface.device
+				eps.emplace_back(ipface.interface_address, iface.port, device_used
 					, ssl, flags | (local ? listen_socket_t::local_network : listen_socket_flags_t{}));
+
+				/*
+				Steps to debug further (no-root-friendly)
+
+				SO_BINDTODEVICE
+
+				setsockopt
+				*/
 			}
 		}
 	}
@@ -2250,6 +2372,8 @@ namespace {
 		{
 #ifndef TORRENT_DISABLE_DHT
 			if (m_dht)
+				std::cout << "m_dht->delete_socket(*remove_iter);\n";
+			if (m_dht)
 				m_dht->delete_socket(*remove_iter);
 #endif
 
@@ -2261,6 +2385,17 @@ namespace {
 					, (*remove_iter)->device.c_str());
 			}
 #endif
+			if ((*remove_iter)->sock)
+				std::cout << "(*remove_iter)->sock->close(ec);\n";
+			if ((*remove_iter)->udp_sock)
+				std::cout << "(*remove_iter)->udp_sock->sock.close();\n";
+			if ((*remove_iter)->natpmp_mapper)
+				std::cout << "(*remove_iter)->natpmp_mapper->close();\n";
+			if ((*remove_iter)->upnp_mapper)
+				std::cout << "(*remove_iter)->upnp_mapper->close();\n";
+			if ((*remove_iter)->lsd)
+				std::cout << "(*remove_iter)->lsd->close();\n";
+
 			if ((*remove_iter)->sock) (*remove_iter)->sock->close(ec);
 			if ((*remove_iter)->udp_sock) (*remove_iter)->udp_sock->sock.close();
 			if ((*remove_iter)->natpmp_mapper) (*remove_iter)->natpmp_mapper->close();
@@ -2272,11 +2407,14 @@ namespace {
 		// all sockets in there stayed the same. Only sockets after this point are
 		// new and should post alerts
 		int const existing_sockets = int(m_listen_sockets.size());
+		std::cout << "existing_sockets = " << existing_sockets << "\n";
 
 		m_stats_counters.set_value(counters::has_incoming_connections
 			, std::any_of(m_listen_sockets.begin(), m_listen_sockets.end()
 				, [](std::shared_ptr<listen_socket_t> const& l)
 				{ return l->incoming_connection; }));
+
+		std::cout << "counters::has_incoming_connections = " << m_stats_counters[counters::has_incoming_connections] << "\n";
 
 		// open new sockets on any endpoints that didn't match with
 		// an existing socket
@@ -2285,10 +2423,12 @@ namespace {
 			try
 #endif
 		{
+			std::cout << "endpoint: " << print_endpoint(ep.addr, ep.port).c_str() << ", device: " << ep.device.c_str() << "\n";
 			std::shared_ptr<listen_socket_t> s = setup_listener(ep, ec);
 
 			if (!ec && (s->sock || s->udp_sock))
 			{
+				std::cout << "  m_listen_sockets.emplace_back(s);\n";
 				m_listen_sockets.emplace_back(s);
 
 #ifndef TORRENT_DISABLE_DHT
@@ -2296,11 +2436,14 @@ namespace {
 					&& s->ssl != transport::ssl
 					&& !(s->flags & listen_socket_t::local_network))
 				{
+					std::cout << "  m_dht->new_socket(m_listen_sockets.back());\n";
 					m_dht->new_socket(m_listen_sockets.back());
 				}
 #endif
 
 				TORRENT_ASSERT(bool(s->flags & listen_socket_t::accept_incoming) == bool(s->sock));
+				if (s->sock)
+					std::cout << "  async_accept(s->sock, s->ssl);\n";
 				if (s->sock) async_accept(s->sock, s->ssl);
 			}
 		}
