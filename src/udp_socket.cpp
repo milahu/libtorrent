@@ -53,6 +53,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <cstdlib>
 #include <functional>
 
+#include <iostream> // debug prints
+
 #include "libtorrent/aux_/disable_warnings_push.hpp"
 #include <boost/asio/ip/v6_only.hpp>
 #include "libtorrent/aux_/disable_warnings_pop.hpp"
@@ -471,45 +473,92 @@ void udp_socket::close()
 
 void udp_socket::open(udp const& protocol, error_code& ec)
 {
-	TORRENT_ASSERT(is_single_thread());
+    TORRENT_ASSERT(is_single_thread());
+    m_abort = false;
 
-	m_abort = false;
+    if (m_socket.is_open()) {
+        std::cout << "[udp_socket::open] closing existing socket" << std::endl;
+        m_socket.close(ec);
+    }
+    ec.clear();
 
-	if (m_socket.is_open()) m_socket.close(ec);
-	ec.clear();
+    std::cout << "[udp_socket::open] opening UDP socket, protocol="
+              << (protocol == udp::v6() ? "IPv6" : "IPv4") << std::endl;
 
-	m_socket.open(protocol, ec);
-	if (ec) return;
-	if (protocol == udp::v6())
-	{
-		error_code err;
-		m_socket.set_option(boost::asio::ip::v6_only(true), err);
+    m_socket.open(protocol, ec);
+    if (ec) {
+        std::cout << "[udp_socket::open] open() failed: " << ec.message()
+                  << " (" << ec.value() << ")" << std::endl;
+        return;
+    }
+
+    if (protocol == udp::v6())
+    {
+        error_code err;
+        m_socket.set_option(boost::asio::ip::v6_only(true), err);
+        if (err) std::cout << "[udp_socket::open] set v6_only failed: "
+                           << err.message() << std::endl;
+    }
+
+    // --- ADD THESE SOCKET OPTION DEBUGS ---
+    boost::system::error_code opt_ec;
+    boost::asio::socket_base::reuse_address reuse_addr(true);
+    m_socket.set_option(reuse_addr, opt_ec);
+    std::cout << "[udp_socket::open] set SO_REUSEADDR: " 
+              << (opt_ec ? opt_ec.message() : "ok") << std::endl;
+
+#ifdef SO_REUSEPORT
+    opt_ec.clear();
+    boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT> reuse_port(true);
+    m_socket.set_option(reuse_port, opt_ec);
+    std::cout << "[udp_socket::open] set SO_REUSEPORT: "
+              << (opt_ec ? opt_ec.message() : "ok") << std::endl;
+#else
+    std::cout << "[udp_socket::open] SO_REUSEPORT not available at compile time" << std::endl;
+#endif
 
 #ifdef TORRENT_WINDOWS
-		// enable Teredo on windows
-		m_socket.set_option(v6_protection_level(PROTECTION_LEVEL_UNRESTRICTED), err);
-#endif // TORRENT_WINDOWS
-	}
-
-	// this is best-effort. ignore errors
-#ifdef TORRENT_WINDOWS
-	error_code err;
-	m_socket.set_option(exclusive_address_use(true), err);
+    // existing code
+    error_code err;
+    m_socket.set_option(exclusive_address_use(true), err);
 #endif
 }
 
 void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
 {
-	if (!m_socket.is_open()) open(ep.protocol(), ec);
-	if (ec) return;
-	m_socket.bind(ep, ec);
-	if (ec) return;
-	m_socket.non_blocking(true, ec);
-	if (ec) return;
+    if (!m_socket.is_open()) open(ep.protocol(), ec);
+    if (ec) return;
 
-	error_code err;
-	m_bind_port = m_socket.local_endpoint(err).port();
-	if (err) m_bind_port = ep.port();
+    std::cout << "[udp_socket::bind] trying to bind to " << ep << std::endl;
+
+    // optional: print socket state before binding
+    {
+        boost::asio::ip::udp::socket::reuse_address opt;
+        m_socket.get_option(opt, ec);
+        std::cout << "[udp_socket::bind] pre-bind reuse_address=" 
+                  << (ec ? ("err:" + ec.message()) : std::to_string(opt.value())) << std::endl;
+    }
+
+    ec.clear();
+    m_socket.bind(ep, ec);
+    if (ec) {
+        std::cout << "[udp_socket::bind] bind(" << ep << ") failed: "
+                  << ec.message() << " (" << ec.value() << ")" << std::endl;
+        return;
+    }
+
+    std::cout << "[udp_socket::bind] bind() succeeded" << std::endl;
+
+    m_socket.non_blocking(true, ec);
+    if (ec) std::cout << "[udp_socket::bind] set non_blocking failed: " << ec.message() << std::endl;
+
+    error_code err;
+    auto lep = m_socket.local_endpoint(err);
+    std::cout << "[udp_socket::bind] local_endpoint after bind: "
+              << (err ? "<err>" : lep.address().to_string()) << ":" << lep.port()
+              << " err=" << err.message() << std::endl;
+
+    m_bind_port = err ? ep.port() : lep.port();
 }
 
 void udp_socket::set_proxy_settings(aux::proxy_settings const& ps
