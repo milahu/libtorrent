@@ -53,215 +53,16 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <cstdlib>
 #include <functional>
 
-#include <iostream>
-
 #include "libtorrent/aux_/disable_warnings_push.hpp"
 #include <boost/asio/ip/v6_only.hpp>
 #include "libtorrent/aux_/disable_warnings_pop.hpp"
-
-#include "libtorrent/aux_/ip_helpers.hpp" // libtorrent::aux::is_global
 
 #ifdef _WIN32
 // for SIO_KEEPALIVE_VALS
 #include <mstcpip.h>
 #endif
 
-
-
-// aux::bind_to_device
-#include <boost/asio.hpp>
-#include <string>
-#include <system_error>
-#include <cstring>
-#include <net/if.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-
-
-// aux::bind_to_device
-#include <boost/asio.hpp>
-#include <string>
-#include <system_error>
-#include <net/if.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <cerrno>
-
-
-
-#include <boost/system/error_code.hpp>
-#include <iostream>
-
-
-
 namespace libtorrent {
-
-
-
-#if false
-// aux::bind_to_device
-namespace aux {
-inline void bind_to_device(
-	boost::asio::ip::udp::socket& sock,
-	const std::string& device,
-	boost::system::error_code& ec
-)
-{
-    int fd = sock.native_handle();
-    // SO_BINDTODEVICE expects a null-terminated C string
-    if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE
-                   , device.c_str(), device.size() + 1) != 0)
-    {
-        int err = errno;
-        ec = boost::system::error_code(err, boost::system::generic_category());
-        return;
-    }
-    ec.clear();
-}
-} // namespace aux
-#elif false
-namespace aux {
-
-// aux::bind_to_device
-inline void bind_to_device(boost::asio::ip::udp::socket& sock
-                           , const std::string& device
-                           , boost::system::error_code& ec)
-{
-#ifdef SO_BINDTODEVICE
-    int fd = sock.native_handle();
-    if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, device.c_str(), device.size() + 1) != 0)
-    {
-        ec = boost::system::error_code(errno, boost::system::generic_category());
-        return;
-    }
-#endif
-    ec.clear();
-}
-
-inline bool is_private(const boost::asio::ip::address& addr)
-{
-    if (addr.is_v4())
-    {
-        auto bytes = addr.to_v4().to_bytes();
-        return (bytes[0] == 10) ||
-               (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-               (bytes[0] == 192 && bytes[1] == 168);
-    }
-    // For IPv6, we can check for unique-local addresses fc00::/7
-    if (addr.is_v6())
-    {
-        auto bytes = addr.to_v6().to_bytes();
-        return (bytes[0] & 0xfe) == 0xfc;
-    }
-    return false;
-}
-
-inline void udp_bind(boost::asio::ip::udp::socket& sock
-                     , const boost::asio::ip::udp::endpoint& ep
-                     , const std::string& device
-					 , error_code& ec
-)
-{
-    // boost::system::error_code ec;
-
-    // Only bind to device if loopback or private address
-    if (ep.address().is_loopback() || is_private(ep.address()))
-    {
-        bind_to_device(sock, device, ec);
-        if (ec)
-        {
-            // fallback: ignore bind-to-device, just bind normally
-            sock.bind(ep, ec);
-        }
-        else
-        {
-            sock.bind(ep, ec);
-        }
-    }
-    else
-    {
-        // public IP: do not bind to device, may fail otherwise
-        sock.bind(ep, ec);
-    }
-
-    if (ec)
-    {
-        throw boost::system::system_error(ec);
-    }
-}
-
-} // namespace aux
-#elif true
-namespace aux {
-void bind_to_device(boost::asio::ip::udp::socket& sock, const std::string& device)
-{
-#ifdef __linux__
-    if (!device.empty()) {
-        if (setsockopt(sock.native_handle(), SOL_SOCKET, SO_BINDTODEVICE,
-                       device.c_str(), device.size()) != 0)
-        {
-            perror("SO_BINDTODEVICE failed");
-        }
-    }
-#endif
-}
-inline bool is_private(const boost::asio::ip::address& addr)
-{
-    if (addr.is_v4())
-    {
-        auto bytes = addr.to_v4().to_bytes();
-        return (bytes[0] == 10) ||
-               (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-               (bytes[0] == 192 && bytes[1] == 168);
-    }
-    // For IPv6, we can check for unique-local addresses fc00::/7
-    if (addr.is_v6())
-    {
-        auto bytes = addr.to_v6().to_bytes();
-        return (bytes[0] & 0xfe) == 0xfc;
-    }
-    return false;
-}
-void bind_udp_socket(boost::asio::ip::udp::socket& sock
-                    , const boost::asio::ip::udp::endpoint& ep
-                    , const std::string& iface_device
-                    , boost::system::error_code& ec)
-{
-    auto ip = ep.address();
-    boost::asio::ip::udp::endpoint bind_ep;
-
-    // Local/private IP → bind directly, maybe bind to device
-    if (ip.is_loopback() || is_private(ip)) {
-        bind_ep = ep;
-        bind_to_device(sock, iface_device);
-    }
-    // Public/global IP → bind to wildcard, let OS pick interface
-    else {
-		// FIXME error: operands to '?:' have different types 'boost::asio::ip::address_v4' and 'boost::asio::ip::address_v6'
-        // bind_ep = boost::asio::ip::udp::endpoint(ip.is_v4()
-        //                                          ? boost::asio::ip::address_v4::any()
-        //                                          : boost::asio::ip::address_v6::any()
-        //                                          , ep.port());
-        bind_ep = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), ep.port());
-        // Do NOT bind SO_BINDTODEVICE for public IP unless root
-    }
-
-    sock.open(bind_ep.protocol(), ec);
-    if (ec) return;
-
-    sock.bind(bind_ep, ec);
-    if (ec) return;
-
-    std::cout << "[udp_socket::bind] bound "
-              << sock.local_endpoint().address().to_string()
-              << ":" << sock.local_endpoint().port()
-              << " device=" << iface_device << std::endl;
-}
-} // namespace aux
-#endif
-
-
 
 using namespace std::placeholders;
 
@@ -270,33 +71,6 @@ std::size_t const tmp_buffer_size = 270;
 
 // used for SOCKS5 UDP wrapper header
 std::size_t const max_header_size = 255;
-
-static std::string hex_escape(span<char const> data, std::size_t max_len = 32)
-{
-    std::string out;
-    std::size_t n = std::min<std::size_t>(max_len, static_cast<std::size_t>(data.size()));
-    out.reserve(n * 4); // enough room for \xNN
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        unsigned char c = static_cast<unsigned char>(data[i]);
-        if (c >= 0x20 && c <= 0x7e && c != '\\')  // printable ASCII
-        {
-            out += static_cast<char>(c);
-        }
-        else if (c == '\\')
-        {
-            out += "\\\\";
-        }
-        else
-        {
-            char buf[5];
-            std::snprintf(buf, sizeof(buf), "\\x%02x", c);
-            out += buf;
-        }
-    }
-    return out;
-}
 
 // this class hold the state of the SOCKS5 connection to maintain the UDP
 // ASSOCIATE tunnel. It's instantiated on the heap for two reasons:
@@ -430,18 +204,6 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 	{
 		int const len = int(m_socket.receive_from(boost::asio::buffer(*m_buf)
 			, p.from, 0, ec));
-
-		if (!ec)
-		{
-			std::cout << "[udp_socket::read] got " << len << " bytes from " << p.from << "\n";
-			std::cout << "[udp_socket::read] payload (first 32 bytes): "
-				<< hex_escape({m_buf->data(), static_cast<ptrdiff_t>(std::min<std::size_t>(32, static_cast<std::size_t>(len)))})
-				<< "\n";
-		}
-		else
-		{
-			std::cout << "[udp_socket::read] receive_from error: " << ec.message() << "\n";
-		}
 
 		if (ec == error::would_block
 			|| ec == error::try_again
@@ -584,74 +346,7 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 	set_dont_frag df(m_socket, (flags & dont_fragment)
 		&& aux::is_v4(ep));
 
-	// m_socket.send_to(boost::asio::buffer(p.data(), static_cast<std::size_t>(p.size())), ep, 0, ec);
-	int bytes_sent = 0;
-	std::cout << "[udp_socket::send] sending " << p.size() << " bytes to " << ep << "\n";
-	std::cout << "[udp_socket::send] payload (first 32 bytes): "
-		<< hex_escape({p.data(), static_cast<ptrdiff_t>(std::min<std::size_t>(32, static_cast<std::size_t>(p.size())))})
-		<< "\n";
-	bytes_sent = m_socket.send_to(boost::asio::buffer(p.data(), p.size()), ep, 0, ec);
-	if (ec)
-	{
-		std::cout << "[udp_socket::send] send_to failed: " << ec.message() << "\n";
-	}
-	else
-	{
-		std::cout << "[udp_socket::send] send_to succeeded: " << bytes_sent << " bytes\n";
-	}
-	if (ec)
-	{
-		using boost::asio::ip::udp;
-		// Operation not permitted / EPERM on send: try fallback using an ephemeral wildcard socket
-		// This is a userspace-only workaround for hosts that have public IPs bound to lo.
-		#if defined(EPERM)
-		if (ec.value() == EPERM)
-		#else
-		if (false)
-		#endif
-		{
-			std::cout << "[udp_socket::send] send_to failed with EPERM, trying ephemeral wildcard socket fallback\n";
-
-			// create a temporary socket on the same io_context as m_socket
-			boost::system::error_code ec2;
-			boost::asio::io_context& ios = static_cast<boost::asio::io_context&>(
-				m_socket.get_executor().context()); // get the io_context from the socket's executor
-
-			// choose protocol based on destination endpoint
-			udp::socket fallback_sock(ios);
-			fallback_sock.open(m_socket.local_endpoint(ec2).protocol(), ec2);
-			if (!ec2)
-			{
-				// bind to unspecified address (0.0.0.0 or ::) so kernel can select the correct outgoing interface
-				if (aux::is_v4(ep))
-				{
-					fallback_sock.bind(udp::endpoint(udp::v4(), 0), ec2);
-				}
-				else
-				{
-					fallback_sock.bind(udp::endpoint(udp::v6(), 0), ec2);
-				}
-			}
-
-			if (!ec2)
-			{
-				std::size_t n = fallback_sock.send_to(boost::asio::buffer(p.data(), static_cast<std::size_t>(p.size()))
-					, ep, 0, ec2);
-				if (ec2)
-				{
-					std::cout << "[udp_socket::send] ephemeral fallback send_to failed: " << ec2.message() << "\n";
-				}
-				else
-				{
-					std::cout << "[udp_socket::send] ephemeral fallback send_to succeeded: " << n << " bytes\n";
-				}
-			}
-			else
-			{
-				std::cout << "[udp_socket::send] ephemeral fallback socket setup failed: " << ec2.message() << "\n";
-			}
-		}
-	}
+	m_socket.send_to(boost::asio::buffer(p.data(), static_cast<std::size_t>(p.size())), ep, 0, ec);
 }
 
 void udp_socket::wrap(udp::endpoint const& ep, span<char const> p
@@ -675,21 +370,7 @@ void udp_socket::wrap(udp::endpoint const& ep, span<char const> p
 	// set the DF flag for the socket and clear it again in the destructor
 	set_dont_frag df(m_socket, (flags & dont_fragment) && aux::is_v4(ep));
 
-	// m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
-	int bytes_sent = 0;
-	std::cout << "[udp_socket::wrap 1] sending " << p.size() << " bytes to " << m_socks5_connection->target() << "\n";
-	std::cout << "[udp_socket::wrap 1] payload (first 32 bytes): "
-		<< hex_escape({p.data(), static_cast<ptrdiff_t>(std::min<std::size_t>(32, static_cast<std::size_t>(p.size())))})
-		<< "\n";
-	bytes_sent = m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
-	if (ec)
-	{
-		std::cout << "[udp_socket::wrap 1] send_to failed: " << ec.message() << "\n";
-	}
-	else
-	{
-		std::cout << "[udp_socket::wrap 1] send_to succeeded: " << bytes_sent << " bytes\n";
-	}
+	m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
 }
 
 void udp_socket::wrap(char const* hostname, int const port, span<char const> p
@@ -717,21 +398,7 @@ void udp_socket::wrap(char const* hostname, int const port, span<char const> p
 	set_dont_frag df(m_socket, (flags & dont_fragment)
 		&& aux::is_v4(m_socket.local_endpoint(ec)));
 
-	// m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
-	int bytes_sent = 0;
-	std::cout << "[udp_socket::wrap 2] sending " << p.size() << " bytes to " << m_socks5_connection->target() << "\n";
-	std::cout << "[udp_socket::wrap 2] payload (first 32 bytes): "
-		<< hex_escape({p.data(), static_cast<ptrdiff_t>(std::min<std::size_t>(32, static_cast<std::size_t>(p.size())))})
-		<< "\n";
-	bytes_sent = m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
-	if (ec)
-	{
-		std::cout << "[udp_socket::wrap 2] send_to failed: " << ec.message() << "\n";
-	}
-	else
-	{
-		std::cout << "[udp_socket::wrap 2] send_to succeeded: " << bytes_sent << " bytes\n";
-	}
+	m_socket.send_to(iovec, m_socks5_connection->target(), 0, ec);
 }
 
 // unwrap the UDP packet from the SOCKS5 header
@@ -831,23 +498,11 @@ void udp_socket::open(udp const& protocol, error_code& ec)
 #endif
 }
 
-#if false
-// void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec, std::string const& device_name)
+void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
 {
 	if (!m_socket.is_open()) open(ep.protocol(), ec);
 	if (ec) return;
-	// m_socket.bind(ep, ec);
-	boost::system::error_code tmp_ec;
-	auto route = boost::asio::ip::udp::endpoint(ep.address(), ep.port());
-	// If this address is assigned only to 'lo' and not used for outgoing routes
-	if (libtorrent::aux::is_global(ep.address()) && device_name == "lo") {
-		std::cout << "[udp_socket::bind] Detected global address on lo, using wildcard bind workaround\n";
-		boost::asio::ip::udp::endpoint any(boost::asio::ip::udp::v4(), ep.port());
-		m_socket.bind(any, tmp_ec);
-	} else {
-		m_socket.bind(ep, tmp_ec);
-	}
+	m_socket.bind(ep, ec);
 	if (ec) return;
 	m_socket.non_blocking(true, ec);
 	if (ec) return;
@@ -856,255 +511,6 @@ void udp_socket::bind(udp::endpoint const& ep, error_code& ec, std::string const
 	m_bind_port = m_socket.local_endpoint(err).port();
 	if (err) m_bind_port = ep.port();
 }
-#elif false
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
-{
-    if (!m_socket.is_open()) open(ep.protocol(), ec);
-    if (ec) return;
-
-    boost::system::error_code tmp_ec;
-    auto ip = ep.address();
-
-    // Only bind to loopback / private addresses
-    if (ip.is_loopback() || ip.is_private())
-    {
-        // Optionally bind to device if needed
-        m_socket.bind(ep, tmp_ec);
-    }
-    else
-    {
-        // Bind normally to global IP without SO_BINDTODEVICE
-        m_socket.bind(ep, tmp_ec);
-    }
-
-    if (tmp_ec) { ec = tmp_ec; return; }
-
-    m_socket.non_blocking(true, ec);
-    if (ec) return;
-
-    m_bind_port = m_socket.local_endpoint(tmp_ec).port();
-}
-#elif false
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
-{
-    if (!m_socket.is_open()) open(ep.protocol(), ec);
-    if (ec) return;
-
-    boost::system::error_code tmp_ec;
-	auto ip = ep.address();
-
-    // For loopback addresses, bind directly
-    if (ip.is_loopback())
-    {
-        m_socket.bind(ep, tmp_ec);
-        if (tmp_ec) { ec = tmp_ec; return; }
-    }
-    // For global addresses
-    else if (libtorrent::aux::is_global(ip))
-    {
-        // Instead of binding to the "lo" device, bind normally to the endpoint
-        m_socket.bind(ep, tmp_ec);
-        if (tmp_ec)
-        {
-            std::cerr << "[udp_socket::bind] failed to bind global IP "
-                      << ip.to_string() << ":" << ep.port()
-                      << ", error: " << tmp_ec.message() << "\n";
-
-            // fallback to wildcard bind
-            boost::asio::ip::udp::endpoint any(ip.is_v4() ? boost::asio::ip::udp::v4()
-                                                           : boost::asio::ip::udp::v6(),
-                                               ep.port());
-            m_socket.bind(any, tmp_ec);
-            if (tmp_ec) { ec = tmp_ec; return; }
-        }
-    }
-    else
-    {
-        // Fallback: bind to endpoint normally
-        m_socket.bind(ep, tmp_ec);
-        if (tmp_ec) { ec = tmp_ec; return; }
-    }
-
-    // Set non-blocking
-    m_socket.non_blocking(true, ec);
-    if (ec) return;
-
-    // Store local port
-    error_code err;
-    m_bind_port = m_socket.local_endpoint(err).port();
-    if (err) m_bind_port = ep.port();
-
-    std::cout << "[udp_socket::bind] bound "
-              << m_socket.local_endpoint().address().to_string()
-              << ":" << m_bind_port
-              << "\n";
-}
-#elif false
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
-{
-    if (!m_socket.is_open()) open(ep.protocol(), ec);
-    if (ec) return;
-
-    boost::system::error_code tmp_ec;
-    auto ip = ep.address();
-
-    // Only bind to loopback / private addresses
-	if (ip.is_loopback() || ip.is_private())
-	{
-		// FIXME SO_BINDTODEVICE only works on Linux. On other OSes, this code should be skipped.
-		std::cout << "[udp_socket::bind] binding to device "
-			<< m_socket.local_endpoint().address().to_string()
-			<< ":" << m_bind_port
-			<< "\n";
-		// Bind to the endpoint *and* the device/interface
-		aux::bind_to_device(m_socket, ep.device(), ec); // ep.device() should return the interface name
-		if (ec)
-		{
-			// fallback: just bind without device
-			m_socket.bind(ep, ec);
-		}
-	}
-	else
-	{
-		std::cout << "[udp_socket::bind] binding to global IP without SO_BINDTODEVICE "
-			<< m_socket.local_endpoint().address().to_string()
-			<< ":" << m_bind_port
-			<< "\n";
-		// Bind normally, without trying to force a device
-		m_socket.bind(ep, tmp_ec);
-	}
-
-    if (tmp_ec) { ec = tmp_ec; return; }
-
-    m_socket.non_blocking(true, ec);
-    if (ec) return;
-
-    m_bind_port = m_socket.local_endpoint(tmp_ec).port();
-}
-#elif false
-// void udp_socket::bind(const boost::asio::ip::udp::endpoint& ep)
-// void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec, std::string const& device_name)
-{
-    // aux::udp_bind(m_socket, ep, device_name, ec);
-    // Only bind to device if loopback or private address
-    if (ep.address().is_loopback() || aux::is_private(ep.address()))
-    {
-        // bind_to_device(sock, device_name, ec);
-		#ifdef SO_BINDTODEVICE
-		std::cout << "[udp_socket::bind] binding with setsockopt SO_BINDTODEVICE "
-			<< m_socket.local_endpoint().address().to_string()
-			<< ":" << m_bind_port
-			<< "\n";
-		int fd = m_socket.native_handle();
-		if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, device_name.c_str(), device_name.size() + 1) != 0)
-		{
-			ec = boost::system::error_code(errno, boost::system::generic_category());
-		}
-		else {
-			ec.clear();
-		}
-		#endif
-		if (ec)
-        {
-			std::cout << "[udp_socket::bind] m_socket.bind(ep, ec) v1 "
-				<< m_socket.local_endpoint().address().to_string()
-				<< ":" << m_bind_port
-				<< "\n";
-			// FIXME this is the same branch body
-            // fallback: ignore bind-to-device, just bind normally
-            m_socket.bind(ep, ec);
-        }
-        else
-        {
-			std::cout << "[udp_socket::bind] m_socket.bind(ep, ec) v2 "
-				<< m_socket.local_endpoint().address().to_string()
-				<< ":" << m_bind_port
-				<< "\n";
-			// FIXME this is the same branch body
-            m_socket.bind(ep, ec);
-        }
-    }
-    else
-    {
-		std::cout << "[udp_socket::bind] m_socket.bind(ep, ec) v3 "
-			<< m_socket.local_endpoint().address().to_string()
-			<< ":" << m_bind_port
-			<< "\n";
-        // public IP: do not bind to device, may fail otherwise
-		// FIXME this is the same branch body
-        m_socket.bind(ep, ec);
-    }
-}
-#elif false
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec, std::string const& device_name)
-{
-    if (m_socket.is_open()) {
-        std::cout << "[udp_socket::bind] already open on "
-                  << m_socket.local_endpoint(ec).address().to_string() << ":"
-                  << m_socket.local_endpoint(ec).port()
-                  << " — skipping rebind\n";
-        return;
-    }
-	// bind_udp_socket(m_socket, ep, device_name, ec);
-
-    std::cout << "[udp_socket::bind] binding to " << ep.address().to_string()
-              << ":" << ep.port() << "\n";
-
-    if (!m_socket.is_open()) {
-        m_socket.open(ep.protocol(), ec);
-        if (ec) {
-            std::cerr << "[udp_socket::bind] open failed: " << ec.message() << "\n";
-            return;
-        }
-    }
-
-    m_socket.bind(ep, ec);
-    if (ec) {
-        std::cerr << "[udp_socket::bind] bind(" << ep << ") failed: " << ec.message() << "\n";
-    } else {
-        auto lep = m_socket.local_endpoint(ec);
-        std::cout << "[udp_socket::bind] bound successfully to "
-                  << lep.address().to_string() << ":" << lep.port() << "\n";
-    }
-
-}
-#elif true
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec, std::string const& device_name)
-{
-    if (m_socket.is_open()) {
-        boost::asio::ip::udp::endpoint lep = m_socket.local_endpoint(ec);
-        if (!ec) {
-            if (lep.port() != 0) {
-                std::cout << "[udp_socket::bind] already bound to "
-                          << lep.address().to_string() << ":" << lep.port()
-                          << " — skipping rebind\n";
-                return;
-            } else {
-                std::cout << "[udp_socket::bind] open but only on "
-                          << lep.address().to_string() << ":" << lep.port()
-                          << " — rebinding to " << ep.address().to_string()
-                          << ":" << ep.port() << "\n";
-            }
-        }
-    } else {
-        m_socket.open(ep.protocol(), ec);
-        if (ec) {
-            std::cerr << "[udp_socket::bind] open failed: " << ec.message() << "\n";
-            return;
-        }
-    }
-
-    m_socket.bind(ep, ec);
-    if (ec) {
-        std::cerr << "[udp_socket::bind] bind(" << ep << ") failed: " << ec.message() << "\n";
-    } else {
-        boost::asio::ip::udp::endpoint lep = m_socket.local_endpoint(ec);
-        std::cout << "[udp_socket::bind] bound successfully to "
-                  << lep.address().to_string() << ":" << lep.port() << "\n";
-    }
-}
-#endif
 
 void udp_socket::set_proxy_settings(aux::proxy_settings const& ps
 	, aux::alert_manager& alerts, aux::resolver_interface& resolver, bool const send_local_ep)
