@@ -212,6 +212,7 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			|| ec == error::operation_aborted
 			|| ec == error::bad_descriptor)
 		{
+			// non-fatal, no data yet
 			return ret;
 		}
 
@@ -220,11 +221,27 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			continue;
 		}
 
+		boost::system::error_code lec;
+		auto local_ep = m_socket.local_endpoint(lec);
+
+		std::string local_ep_str;
+		{
+			boost::system::error_code lec;
+			auto lep = m_socket.local_endpoint(lec);
+			local_ep_str = lec ? "(unknown)" : lep.address().to_string() + ":" + std::to_string(lep.port());
+		}
+
 		if (ec)
 		{
-			// SOCKS5 cannot wrap ICMP errors. And even if it could, they certainly
-			// would not arrive as unwrapped (regular) ICMP errors. If we're using
-			// a proxy we must ignore these
+			std::cout << "[udp_socket::read] recv_from FAILED"
+			          << " ec=" << ec.message()
+			          << " (" << ec.value() << ")"
+			          << " errno=" << errno
+			          << " from=" << p.from
+					  << " local=" << local_ep_str
+			          << std::endl;
+
+			// ignore ICMP errors when using a proxy
 			if (m_proxy_settings.type != settings_pack::none) continue;
 
 			p.error = ec;
@@ -234,35 +251,45 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 		{
 			p.data = {m_buf->data(), len};
 
-			// support packets coming from the SOCKS5 proxy
+			std::cout << "[udp_socket::read] recv_from SUCCESS"
+			          << " from=" << p.from
+					  << " local=" << local_ep_str
+			          << " len=" << len
+			          << std::endl;
+
+			// handle proxy unwrapping
 			if (active_socks5())
 			{
-				// if the source IP doesn't match the proxy's, ignore the packet
-				if (p.from != m_socks5_connection->target()) continue;
-				// if we failed to unwrap, silently ignore the packet
-				if (!unwrap(p)) continue;
+				if (p.from != m_socks5_connection->target())
+				{
+					std::cout << "[udp_socket::read] ignoring packet from unexpected source "
+					          << p.from << " (expected proxy)" << std::endl;
+					continue;
+				}
+				if (!unwrap(p))
+				{
+					std::cout << "[udp_socket::read] unwrap failed, ignoring packet" << std::endl;
+					continue;
+				}
 			}
 			else
 			{
-				// if we don't proxy trackers or peers, we may be receiving unwrapped
-				// packets and we must let them through.
 				bool const proxy_only
 					= m_proxy_settings.proxy_peer_connections
-					&& m_proxy_settings.proxy_tracker_connections
-					;
+					&& m_proxy_settings.proxy_tracker_connections;
 
-				// if we proxy everything, block all packets that aren't coming from
-				// the proxy
-				if (m_proxy_settings.type != settings_pack::none && proxy_only) continue;
+				if (m_proxy_settings.type != settings_pack::none && proxy_only)
+				{
+					std::cout << "[udp_socket::read] ignoring non-proxy packet " << p.from << std::endl;
+					continue;
+				}
 			}
 		}
 
 		pkts[ret] = p;
 		++ret;
 
-		// we only have a single buffer for now, so we can only return a
-		// single packet. In the future though, we could attempt to drain
-		// the socket here, or maybe even use recvmmsg()
+		// we only have one buffer, so break after first packet
 		break;
 	}
 
@@ -317,38 +344,65 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 {
 	TORRENT_ASSERT(is_single_thread());
 
-	// if the sockets are closed, the udp_socket is closing too
 	if (!is_open())
 	{
 		ec = error_code(boost::system::errc::bad_file_descriptor, generic_category());
+		std::cout << "[udp_socket::send] socket not open" << std::endl;
 		return;
 	}
 
 	bool const use_proxy
 		= ((flags & peer_connection) && m_proxy_settings.proxy_peer_connections)
 		|| ((flags & tracker_connection) && m_proxy_settings.proxy_tracker_connections)
-		|| !(flags & (tracker_connection | peer_connection))
-		;
+		|| !(flags & (tracker_connection | peer_connection));
 
 	if (use_proxy && m_proxy_settings.type != settings_pack::none)
 	{
+		std::cout << "[udp_socket::send] using proxy type=" << m_proxy_settings.type
+		          << " to dest=" << ep << std::endl;
+
 		if (active_socks5())
 		{
-			// send udp packets through SOCKS5 server
+			std::cout << "[udp_socket::send] sending via SOCKS5" << std::endl;
 			wrap(ep, p, ec, flags);
 		}
 		else
 		{
+			std::cout << "[udp_socket::send] proxy inactive, permission denied" << std::endl;
 			ec = error_code(boost::system::errc::permission_denied, generic_category());
 		}
 		return;
 	}
 
-	// set the DF flag for the socket and clear it again in the destructor
-	set_dont_frag df(m_socket, (flags & dont_fragment)
-		&& aux::is_v4(ep));
+	set_dont_frag df(m_socket, (flags & dont_fragment) && aux::is_v4(ep));
+
+	// print before send
+	boost::system::error_code lec;
+	auto local_ep = m_socket.local_endpoint(lec);
+	std::cout << "[udp_socket::send] sending packet"
+	          << " from " << (lec ? "(unknown)" : local_ep.address().to_string())
+	          << ":" << (lec ? 0 : local_ep.port())
+	          << " to " << ep
+	          << " size=" << p.size()
+	          << " use_proxy=" << use_proxy
+	          << " dont_frag=" << bool(flags & dont_fragment)
+	          << std::endl;
 
 	m_socket.send_to(boost::asio::buffer(p.data(), static_cast<std::size_t>(p.size())), ep, 0, ec);
+
+	if (ec)
+	{
+		std::cout << "[udp_socket::send] send_to FAILED ec=" << ec.message()
+		          << " (" << ec.value() << ")"
+		          << " errno=" << errno
+		          << " dest=" << ep
+		          << std::endl;
+	}
+	else
+	{
+		std::cout << "[udp_socket::send] send_to SUCCESS dest=" << ep
+		          << " size=" << p.size() << std::endl;
+	}
 }
 
 void udp_socket::wrap(udp::endpoint const& ep, span<char const> p
