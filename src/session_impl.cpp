@@ -1167,6 +1167,7 @@ bool ssl_server_name_callback(ssl::stream_handle_type stream_handle, std::string
 		stop_upnp();
 		stop_natpmp();
 #ifndef TORRENT_DISABLE_DHT
+		std::cout << "[session_impl::abort] calling stop_dht" << std::endl;
 		stop_dht();
 		m_dht_announce_timer.cancel();
 #endif
@@ -2145,6 +2146,7 @@ namespace {
 
 	void session_impl::reopen_listen_sockets(bool const map_ports)
 	{
+		std::cout << "[session_impl::reopen_listen_sockets] called, stopping DHT" << std::endl;
 #ifndef TORRENT_DISABLE_LOGGING
 		session_log("reopen listen sockets");
 #endif
@@ -5588,7 +5590,10 @@ namespace {
 			}
 		}
 		else
+		{
+			std::cout << "[session_impl::update_dht] calling stop_dht" << std::endl;
 			stop_dht();
+		}
 #endif
 	}
 
@@ -5959,35 +5964,41 @@ namespace {
 	{
 		INVARIANT_CHECK;
 
+		std::cout << "[session_impl::start_dht] called" << std::endl;
+
+		std::cout << "[session_impl::start_dht] calling stop_dht" << std::endl;
 		stop_dht();
 
-		if (!m_settings.get_bool(settings_pack::enable_dht)) return;
+		bool const enable_dht = m_settings.get_bool(settings_pack::enable_dht);
+		std::cout << "[session_impl::start_dht] enable_dht = " << enable_dht << std::endl;
+		if (!enable_dht)
+		{
+			std::cout << "[session_impl::start_dht] DHT disabled in settings -> return" << std::endl;
+			return;
+		}
 
-		// postpone starting the DHT if we're still resolving the DHT router
+		std::cout << "[session_impl::start_dht] outstanding_router_lookups = " << m_outstanding_router_lookups << std::endl;
 		if (m_outstanding_router_lookups > 0)
 		{
-#ifndef TORRENT_DISABLE_LOGGING
-			session_log("not starting DHT, outstanding router lookups: %d"
-				, m_outstanding_router_lookups);
-#endif
+			std::cout << "[session_impl::start_dht] not starting DHT, outstanding router lookups pending" << std::endl;
 			return;
 		}
 
+		std::cout << "[session_impl::start_dht] m_abort = " << m_abort << std::endl;
 		if (m_abort)
 		{
-#ifndef TORRENT_DISABLE_LOGGING
-			session_log("not starting DHT, aborting");
-#endif
+			std::cout << "[session_impl::start_dht] not starting DHT, aborting" << std::endl;
 			return;
 		}
 
-#ifndef TORRENT_DISABLE_LOGGING
-		session_log("starting DHT, running: %s, router lookups: %d"
-			, m_dht ? "true" : "false", m_outstanding_router_lookups);
-#endif
+		std::cout << "[session_impl::start_dht] starting DHT, was running: "
+				<< (m_dht ? "true" : "false")
+				<< ", router lookups: " << m_outstanding_router_lookups << std::endl;
 
-		// TODO: refactor, move the storage to dht_tracker
+		// Create DHT storage
 		m_dht_storage = m_dht_storage_constructor(m_settings);
+
+		// Construct DHT tracker
 		m_dht = std::make_shared<dht::dht_tracker>(
 			static_cast<dht::dht_observer*>(this)
 			, m_io_context
@@ -6002,22 +6013,65 @@ namespace {
 			, *m_dht_storage
 			, std::move(m_dht_state));
 
+		if (m_dht)
+			std::cout << "[session_impl::start_dht] DHT object created successfully" << std::endl;
+		else
+			std::cout << "[session_impl::start_dht] ERROR: m_dht is nullptr after construction" << std::endl;
+
+		std::cout << "[session_impl::start_dht] m_listen_sockets size = " << m_listen_sockets.size() << std::endl;
+
 		for (auto& s : m_listen_sockets)
 		{
-			if (s->ssl != transport::ssl
-				&& !(s->flags & listen_socket_t::local_network))
+			auto const& lep = s->local_endpoint;
+			address const addr = lep.address();
+			bool const is_v4 = addr.is_v4();
+			bool const loopback = addr.is_loopback();
+			bool const local = is_local(addr);
+			bool const global = is_global(addr);
+
+			std::cout << "[session_impl::start_dht] checking listen socket: "
+					<< "device=" << s->device
+					<< " addr=" << addr
+					<< " is_ssl=" << (s->ssl == transport::ssl)
+					<< " is_v4=" << is_v4
+					<< " is_loopback=" << loopback
+					<< " is_local=" << local
+					<< " is_global=" << global
+					<< " ssl=" << (s->ssl == transport::ssl)
+					// << " flags=" << s->flags
+					<< " is_local_network=" << (s->flags & listen_socket_t::local_network)
+					<< std::endl;
+
+			if (
+				s->ssl != transport::ssl
+				&& !(s->flags & listen_socket_t::local_network)
+				// && !local // skip local-only address: device=lo addr=10.0.0.1
+			)
 			{
+				std::cout << "[session_impl::start_dht] adding socket to DHT" << std::endl;
 				m_dht->new_socket(s);
+			}
+			else
+			{
+				std::cout << "[session_impl::start_dht] skipping socket (ssl or local_network)" << std::endl;
 			}
 		}
 
+		std::cout << "[session_impl::start_dht] adding DHT router nodes (" << m_dht_router_nodes.size() << ")" << std::endl;
 		for (auto const& n : m_dht_router_nodes)
 		{
+	#if TORRENT_USE_IPV6
+			std::cout << "  router node: " << n.address() << ":" << n.port() << std::endl;
+	#else
+			std::cout << "  router node: " << n.address() << ":" << n.port() << std::endl;
+	#endif
 			m_dht->add_router_node(n);
 		}
 
+		std::cout << "[session_impl::start_dht] adding bootstrap DHT nodes (" << m_dht_nodes.size() << ")" << std::endl;
 		for (auto const& n : m_dht_nodes)
 		{
+			std::cout << "  bootstrap node: " << n.address() << ":" << n.port() << std::endl;
 			m_dht->add_node(n);
 		}
 		m_dht_nodes.clear();
@@ -6026,15 +6080,19 @@ namespace {
 		auto cb = [this](
 			std::vector<std::pair<dht::node_entry, std::string>> const&)
 		{
+			std::cout << "[session_impl::start_dht] bootstrap callback triggered" << std::endl;
 			if (m_alerts.should_post<dht_bootstrap_alert>())
 				m_alerts.emplace_alert<dht_bootstrap_alert>();
 		};
 
+		std::cout << "[session_impl::start_dht] calling m_dht->start()" << std::endl;
 		m_dht->start(cb);
+		std::cout << "[session_impl::start_dht] DHT start() called" << std::endl;
 	}
 
 	void session_impl::stop_dht()
 	{
+		std::cout << "[session_impl::stop_dht] called, m_dht=" << (m_dht ? "non-null" : "null") << std::endl;
 #ifndef TORRENT_DISABLE_LOGGING
 		session_log("about to stop DHT, running: %s", m_dht ? "true" : "false");
 #endif
@@ -6705,7 +6763,7 @@ namespace {
 		if (!m_dht)
 		{
 #ifndef TORRENT_DISABLE_LOGGING
-			session_log("not starting DHT announce timer: m_dht == nullptr");
+			session_log("[session_impl::update_dht_announce_interval] not starting DHT announce timer: m_dht == nullptr");
 #endif
 			return;
 		}
@@ -6715,7 +6773,7 @@ namespace {
 		if (m_abort)
 		{
 #ifndef TORRENT_DISABLE_LOGGING
-			session_log("not starting DHT announce timer: m_abort set");
+			session_log("[session_impl::update_dht_announce_interval] not starting DHT announce timer: m_abort set");
 #endif
 			return;
 		}
@@ -6731,6 +6789,8 @@ namespace {
 			// until we announce those.
 			delay = std::min(4000, delay);
 		}
+
+		session_log("[session_impl::update_dht_announce_interval] starting DHT announce timer: delay=%d", delay);
 
 		m_dht_announce_timer.expires_after(milliseconds(delay));
 		m_dht_announce_timer.async_wait([this](error_code const& e) {
