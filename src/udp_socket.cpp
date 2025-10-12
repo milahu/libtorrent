@@ -578,9 +578,12 @@ void udp_socket::open(udp const& protocol, error_code& ec)
 #endif
 }
 
-void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
+// void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
+void udp_socket::bind(udp::endpoint const& const_ep, error_code& ec)
 {
-    if (!m_socket.is_open()) open(ep.protocol(), ec);
+    udp::endpoint ep = const_ep; // copy, since const_ep is const
+
+	if (!m_socket.is_open()) open(ep.protocol(), ec);
     if (ec) return;
 
     std::cout << "[udp_socket::bind] trying to bind to " << ep << std::endl;
@@ -591,6 +594,29 @@ void udp_socket::bind(udp::endpoint const& ep, error_code& ec)
         m_socket.get_option(opt, ec);
         std::cout << "[udp_socket::bind] pre-bind reuse_address=" 
                   << (ec ? ("err:" + ec.message()) : std::to_string(opt.value())) << std::endl;
+    }
+
+    const char* env_ip = std::getenv("MY_PUBLIC_IPADDR");
+    if (env_ip && std::strlen(env_ip) > 0)
+    {
+        try
+        {
+            using namespace boost::asio::ip;
+            address const my_public_ip = make_address(env_ip);
+
+            if (ep.address() == my_public_ip)
+            {
+                std::cout << "[udp_socket::bind] replacing bind address "
+                          << ep.address() << " (env MY_PUBLIC_IPADDR=" << env_ip
+                          << ") with 0.0.0.0" << std::endl;
+                ep.address(address_v4::any());
+            }
+        }
+        catch (std::exception const& e)
+        {
+            std::cout << "[udp_socket::bind] make_address(" << env_ip
+                      << ") failed: " << e.what() << std::endl;
+        }
     }
 
     ec.clear();
