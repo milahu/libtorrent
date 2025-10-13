@@ -55,6 +55,19 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #include <iostream> // debug prints
 
+// escape_bytes
+#include <iomanip>
+#include <sstream>
+
+// no, SO_BINDTODEVICE requires root access
+/*
+// force binding to environment interface if requested
+#include <cstring>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <net/if.h>
+*/
+
 #include "libtorrent/aux_/disable_warnings_push.hpp"
 #include <boost/asio/ip/v6_only.hpp>
 #include "libtorrent/aux_/disable_warnings_pop.hpp"
@@ -67,6 +80,17 @@ POSSIBILITY OF SUCH DAMAGE.
 namespace libtorrent {
 
 using namespace std::placeholders;
+
+std::string escape_bytes(const char* data, size_t len) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char c = static_cast<unsigned char>(data[i]);
+        if (std::isprint(c)) oss << data[i];
+        else oss << "\\x" << std::setw(2) << int(c);
+    }
+    return oss.str();
+}
 
 // used to build SOCKS messages in
 std::size_t const tmp_buffer_size = 270;
@@ -213,16 +237,18 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			|| ec == error::bad_descriptor)
 		{
 			// non-fatal, no data yet
+			std::cout << "[udp_socket::read] recv_from FAILED: no data yet. len=" << len << std::endl;
 			return ret;
 		}
 
 		if (ec == error::interrupted)
 		{
+			std::cout << "[udp_socket::read] recv_from FAILED: interrupted. len=" << len << std::endl;
 			continue;
 		}
 
 		boost::system::error_code lec;
-		auto local_ep = m_socket.local_endpoint(lec);
+		// auto local_ep = m_socket.local_endpoint(lec);
 
 		std::string local_ep_str;
 		{
@@ -239,6 +265,7 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			          << " errno=" << errno
 			          << " from=" << p.from
 					  << " local=" << local_ep_str
+			          << " len=" << len
 			          << std::endl;
 
 			// ignore ICMP errors when using a proxy
@@ -255,6 +282,7 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			          << " from=" << p.from
 					  << " local=" << local_ep_str
 			          << " len=" << len
+			          << " data=" << escape_bytes(m_buf->data(), len)
 			          << std::endl;
 
 			// handle proxy unwrapping
@@ -376,6 +404,23 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 
 	set_dont_frag df(m_socket, (flags & dont_fragment) && aux::is_v4(ep));
 
+	/*
+	// force outbound address
+	std::cout << "[udp_socket::send] setting outbound address to 10.0.0.1" << std::endl;
+	error_code opt_ec;
+	boost::asio::ip::unicast::outbound_interface out_if(
+		boost::asio::ip::make_address("10.0.0.1"), 0);
+	m_socket.set_option(out_if, opt_ec);
+	if (opt_ec)
+		std::cout << "[udp_socket::send] failed to set outbound address: "
+				<< opt_ec.message() << std::endl;
+
+	// force outbound interface
+	std::cout << "[udp_socket::send] setting outbound interface to enp1s0f0" << std::endl;
+	int fd = m_socket.native_handle();
+	setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, "enp1s0f0", strlen("enp1s0f0"));
+	*/
+
 	// print before send
 	boost::system::error_code lec;
 	auto local_ep = m_socket.local_endpoint(lec);
@@ -401,7 +446,9 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 	else
 	{
 		std::cout << "[udp_socket::send] send_to SUCCESS dest=" << ep
-		          << " size=" << p.size() << std::endl;
+		          << " size=" << p.size()
+		          << " data=" << escape_bytes(p.data(), static_cast<std::size_t>(p.size()))
+		          << std::endl;
 	}
 }
 
@@ -618,6 +665,25 @@ void udp_socket::bind(udp::endpoint const& const_ep, error_code& ec)
                       << ") failed: " << e.what() << std::endl;
         }
     }
+
+	// no, SO_BINDTODEVICE requires root access
+	/*
+	// force binding to environment interface if requested
+	char const* iface_env = std::getenv("MY_IFACE");
+	if (iface_env)
+	{
+		int fd = m_socket.native_handle();
+		if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, iface_env, strlen(iface_env)) != 0)
+		{
+			std::cerr << "[udp_socket::bind] failed to bind socket to device "
+					<< iface_env << ": " << strerror(errno) << "\n";
+		}
+		else
+		{
+			std::cerr << "[udp_socket::bind] bound socket to device " << iface_env << "\n";
+		}
+	}
+	*/
 
     ec.clear();
     m_socket.bind(ep, ec);
