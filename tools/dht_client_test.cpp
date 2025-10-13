@@ -12,6 +12,8 @@
 #include <chrono>
 #include <atomic>
 #include <iomanip>
+#include <sstream>
+#include <random>
 #include <ctime>
 #include <string>
 #include <stdexcept>
@@ -66,6 +68,26 @@ void print_help(const char* prog) {
         << "  --stop-nodes <N>   Stop when connected to at least N DHT nodes (default: 0)\n"
         << "  --stop-time <N>    Stop after N seconds (default: 0)\n"
     ;
+}
+
+libtorrent::sha1_hash random_sha1()
+{
+    std::array<unsigned char, 20> buf;
+    static std::mt19937_64 rng(std::random_device{}());
+    for (auto &b : buf)
+        b = static_cast<unsigned char>(rng() & 0xFF);
+    libtorrent::sha1_hash h;
+    std::memcpy(h.data(), buf.data(), 20);
+    return h;
+}
+
+std::string to_hex(const libtorrent::sha1_hash& h)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (auto b : h)
+        oss << std::setw(2) << int(static_cast<unsigned char>(b));
+    return oss.str();
 }
 
 int main(int argc, char* argv[]) {
@@ -173,11 +195,21 @@ int main(int argc, char* argv[]) {
 
     libtorrent::session ses{pack};
 
+    bool is_random_hash = (test_btih == "random");
+
     libtorrent::sha1_hash test_hash;
-    libtorrent::aux::from_hex(test_btih, test_hash.data());
+    if (is_random_hash)
+    {
+        test_hash = random_sha1();
+    }
+    else
+    {
+        libtorrent::aux::from_hex(test_btih, test_hash.data());
+    }
 
     // force DHT activity by sending queries
-    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << test_btih << " every " << sleep_query << " seconds" << std::endl;
+    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query every " << sleep_query << " seconds" << std::endl;
+    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << to_hex(test_hash) << std::endl;
     ses.dht_get_peers(test_hash);
     auto last_dht_query = std::chrono::steady_clock::now();
 
@@ -274,6 +306,12 @@ int main(int argc, char* argv[]) {
         // re-send DHT query every N seconds
         auto now_steady = std::chrono::steady_clock::now();
         if (now_steady - last_dht_query >= std::chrono::seconds(sleep_query)) {
+            if (is_random_hash)
+            {
+                test_hash = random_sha1();
+                to_hex(test_hash) = to_hex(test_hash);
+            }
+            std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << to_hex(test_hash) << std::endl;
             ses.dht_get_peers(test_hash);
             last_dht_query = now_steady;
         }
