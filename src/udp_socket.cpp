@@ -237,7 +237,7 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			|| ec == error::bad_descriptor)
 		{
 			// non-fatal, no data yet
-			std::cout << "[udp_socket::read] recv_from FAILED: no data yet. len=" << len << std::endl;
+			// std::cout << "[udp_socket::read] recv_from FAILED: no data yet. len=" << len << std::endl;
 			return ret;
 		}
 
@@ -278,12 +278,15 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 		{
 			p.data = {m_buf->data(), len};
 
+			// moved to: [dht_tracker::incoming] received DHT message
+			/*
 			std::cout << "[udp_socket::read] recv_from SUCCESS"
 			          << " from=" << p.from
 					  << " local=" << local_ep_str
 			          << " len=" << len
 			          // << " data=" << escape_bytes(m_buf->data(), len)
 			          << std::endl;
+			*/
 
 			// handle proxy unwrapping
 			if (active_socks5())
@@ -421,6 +424,7 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 	setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, "enp1s0f0", strlen("enp1s0f0"));
 	*/
 
+	/*
 	// print before send
 	boost::system::error_code lec;
 	auto local_ep = m_socket.local_endpoint(lec);
@@ -432,24 +436,34 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 	          << " use_proxy=" << use_proxy
 	          << " dont_frag=" << bool(flags & dont_fragment)
 	          << std::endl;
+	*/
 
 	m_socket.send_to(boost::asio::buffer(p.data(), static_cast<std::size_t>(p.size())), ep, 0, ec);
 
+	boost::system::error_code lec;
+	auto local_ep = m_socket.local_endpoint(lec);
 	if (ec)
 	{
-		std::cout << "[udp_socket::send] send_to FAILED ec=" << ec.message()
+		std::cout << "[udp_socket::send] send_to FAILED"
+				  << " ec=" << ec.message()
 		          << " (" << ec.value() << ")"
 		          << " errno=" << errno
-		          << " dest=" << ep
+				  << " src=" << (lec ? "(unknown)" : local_ep.address().to_string())
+				  << " dst=" << ep
 		          << std::endl;
 	}
+	// moved to: [rpc_manager::invoke] sending DHT message
+	/*
 	else
 	{
-		std::cout << "[udp_socket::send] send_to SUCCESS dest=" << ep
+		std::cout << "[udp_socket::send] send_to SUCCESS"
+				  << " src=" << (lec ? "(unknown)" : local_ep.address().to_string())
+				  << " dst=" << ep
 		          << " size=" << p.size()
 		          // << " data=" << escape_bytes(p.data(), static_cast<std::size_t>(p.size()))
 		          << std::endl;
 	}
+	*/
 }
 
 void udp_socket::wrap(udp::endpoint const& ep, span<char const> p
