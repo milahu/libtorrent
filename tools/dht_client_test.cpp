@@ -1,6 +1,7 @@
 // Minimal BitTorrent DHT client for latest libtorrent master (2025)
 // Reports approximate DHT peer count every second with timestamp (logfile style)
 // Supports binding to a specific interface and port via command line
+// Supports reading multiple BTIHs (--btih or --btih-file) and querying one per interval
 
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
@@ -17,6 +18,8 @@
 #include <ctime>
 #include <string>
 #include <stdexcept>
+#include <vector>
+#include <fstream>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -62,12 +65,12 @@ void print_help(const char* prog) {
         << "  --help             Show this help text and exit\n"
         << "  --bind <iface>     Bind to the given network interface (e.g. eth0)\n"
         << "  --port <port>      Set listening port for TCP/UDP/DHT (default: 6881)\n"
-        << "  --btih <btih>      Query the DHT for this torrent (default: " << DEFAULT_TEST_BTIH << ")\n"
+        << "  --btih <btih>      Add a BTIH (40-char hex or 'random') to the query list (can repeat)\n"
+        << "  --btih-file <path> Read one or more BTIHs (40-char hex or 'random') from file\n"
         << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 1)\n"
-        << "  --sleep-query <N>  Re-send the DHT query every N seconds (default: 30)\n"
+        << "  --sleep-query <N>  Re-send the DHT query every N seconds (default: 5)\n"
         << "  --stop-nodes <N>   Stop when connected to at least N DHT nodes (default: 0)\n"
-        << "  --stop-time <N>    Stop after N seconds (default: 0)\n"
-    ;
+        << "  --stop-time <N>    Stop after N seconds (default: 0)\n";
 }
 
 libtorrent::sha1_hash random_sha1()
@@ -90,14 +93,34 @@ std::string to_hex(const libtorrent::sha1_hash& h)
     return oss.str();
 }
 
+// decode 40-char hex string to 20-byte array
+std::vector<unsigned char> base16decode(const std::string& hex)
+{
+    if (hex.size() != 40)
+        throw std::invalid_argument("invalid btih length (must be 40 hex chars)");
+
+    std::vector<unsigned char> out(20);
+    for (size_t i = 0; i < 20; ++i) {
+        unsigned int byte;
+        std::stringstream ss;
+        ss << std::hex << hex.substr(i * 2, 2);
+        ss >> byte;
+        if (ss.fail())
+            throw std::invalid_argument("invalid hex string");
+        out[i] = static_cast<unsigned char>(byte);
+    }
+    return out;
+}
+
 int main(int argc, char* argv[]) {
     std::string bind_iface;
     int listen_port = 6881; // default port
     int sleep_print = 1;
-    int sleep_query = 30;
+    int sleep_query = 5;
     int stop_nodes = 0;
     int stop_time = 0;
-    std::string test_btih = DEFAULT_TEST_BTIH;
+    std::string btih_file;
+    std::vector<std::string> btih_list;
 
     // parse command line
     for (int i = 1; i < argc; ++i) {
@@ -110,29 +133,31 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--port" && i + 1 < argc) {
             listen_port = std::stoi(argv[++i]);
         } else if (arg == "--btih" && i + 1 < argc) {
-            test_btih = argv[++i];
+            btih_list.push_back(argv[++i]);
+        } else if (arg == "--btih-file" && i + 1 < argc) {
+            btih_file = argv[++i];
         } else if (arg == "--sleep-print" && i + 1 < argc) {
             sleep_print = std::stoi(argv[++i]);
             if (sleep_print <= 0) {
-                std::cout << "error: sleep-print cannot be zero or less: " << sleep_print << std::endl;
+                std::cout << "error: sleep-print cannot be zero or less\n";
                 return 1;
             }
         } else if (arg == "--sleep-query" && i + 1 < argc) {
             sleep_query = std::stoi(argv[++i]);
             if (sleep_query <= 0) {
-                std::cout << "error: sleep-query cannot be zero or less: " << sleep_query << std::endl;
+                std::cout << "error: sleep-query cannot be zero or less\n";
                 return 1;
             }
         } else if (arg == "--stop-nodes" && i + 1 < argc) {
             stop_nodes = std::stoi(argv[++i]);
             if (stop_nodes < 0) {
-                std::cout << "error: stop-nodes cannot be less than zero: " << stop_nodes << std::endl;
+                std::cout << "error: stop-nodes cannot be less than zero\n";
                 return 1;
             }
         } else if (arg == "--stop-time" && i + 1 < argc) {
             stop_time = std::stoi(argv[++i]);
             if (stop_time < 0) {
-                std::cout << "error: stop-time cannot be less than zero: " << stop_time << std::endl;
+                std::cout << "error: stop-time cannot be less than zero\n";
                 return 1;
             }
         } else {
@@ -141,17 +166,39 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    libtorrent::settings_pack pack;
+    // load BTIHs from file if provided
+    if (!btih_file.empty()) {
+        std::ifstream fin(btih_file);
+        if (!fin) {
+            std::cerr << "error: cannot open btih-file: " << btih_file << std::endl;
+            return 1;
+        }
+        std::string line;
+        while (std::getline(fin, line)) {
+            // trim spaces
+            line.erase(0, line.find_first_not_of(" \t\r\n"));
+            line.erase(line.find_last_not_of(" \t\r\n") + 1);
+            // skip empty and comment lines
+            if (line.empty() || line[0] == '#') continue;
+            btih_list.push_back(line);
+        }
+        fin.close();
+    }
 
-    // Disable unneeded features
+    // if no btihs provided, add default one
+    if (btih_list.empty()) {
+        btih_list.push_back(DEFAULT_TEST_BTIH);
+        std::cout << "No BTIHs provided; using default " << DEFAULT_TEST_BTIH << std::endl;
+    }
+
+    std::cout << "Sending DHT queries for " << btih_list.size() << " infohashes" << std::endl;
+
+    libtorrent::settings_pack pack;
     pack.set_bool(libtorrent::settings_pack::enable_lsd, false);
     pack.set_bool(libtorrent::settings_pack::enable_upnp, false);
     pack.set_bool(libtorrent::settings_pack::enable_natpmp, false);
     pack.set_bool(libtorrent::settings_pack::enable_dht, true);
-
-    // enable alerts
     pack.set_int(libtorrent::settings_pack::alert_mask,
-        // libtorrent::alert_category::all |
         libtorrent::alert_category::dht |
         libtorrent::alert_category::status |
         libtorrent::alert_category::error |
@@ -174,59 +221,52 @@ int main(int argc, char* argv[]) {
     std::time_t now_c = std::chrono::system_clock::to_time_t(now);
     std::tm tm = *std::localtime(&now_c);
 
-    // Restrict to specific interface and port if requested
     if (!bind_iface.empty()) {
-        // no! bind_iface can be a device name (lo, eth0, ...) or an ip address (192.168.178.20, ...)
-        // let libtorrent do the resolving
-        // because a device name can have multiple ip addresses
-        // std::string ip = get_iface_ip(bind_iface);
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
-                     // ip + ":" + std::to_string(listen_port));
                      bind_iface + ":" + std::to_string(listen_port));
-        std::cout << std::put_time(&tm, "%F %T") << " Binding DHT client to interface " << bind_iface
-                  // << " (IP " << ip << ") on port " << listen_port << std::endl;
+        std::cout << std::put_time(&tm, "%F %T")
+                  << " Binding DHT client to interface " << bind_iface
                   << " on port " << listen_port << std::endl;
     } else {
-        // otherwise bind to all interfaces
         pack.set_str(libtorrent::settings_pack::listen_interfaces,
                      "0.0.0.0:" + std::to_string(listen_port));
-        std::cout << std::put_time(&tm, "%F %T") << " Binding DHT client to all interfaces on port " << listen_port << std::endl;
+        std::cout << std::put_time(&tm, "%F %T")
+                  << " Binding DHT client to all interfaces on port " << listen_port << std::endl;
     }
 
     libtorrent::session ses{pack};
 
-    bool is_random_hash = (test_btih == "random");
-
+    size_t current_btih_index = 0;
     libtorrent::sha1_hash test_hash;
-    if (is_random_hash)
-    {
+    const std::string& first_btih = btih_list[current_btih_index];
+
+    if (first_btih == "random") {
         test_hash = random_sha1();
-    }
-    else
-    {
-        libtorrent::aux::from_hex(test_btih, test_hash.data());
+    } else {
+        auto bytes = base16decode(first_btih);
+        std::memcpy(test_hash.data(), bytes.data(), 20);
     }
 
-    // force DHT activity by sending queries
-    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query every " << sleep_query << " seconds" << std::endl;
-    std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << to_hex(test_hash) << std::endl;
+    std::cout << std::put_time(&tm, "%F %T")
+              << " Sending DHT query every " << sleep_query << " seconds" << std::endl;
+    std::cout << std::put_time(&tm, "%F %T")
+              << " Sending DHT query for btih " << to_hex(test_hash) << std::endl;
+
     ses.dht_get_peers(test_hash);
     auto last_dht_query = std::chrono::steady_clock::now();
 
     std::cout << std::put_time(&tm, "%F %T")
-        << " DHT client running. Printing DHT node count every "
-        << sleep_print << " seconds" << std::endl;
+              << " DHT client running. Printing DHT node count every "
+              << sleep_print << " seconds" << std::endl;
 
     static auto start_time = std::chrono::steady_clock::now();
 
     while (true) {
-
         auto now = std::chrono::system_clock::now();
         std::time_t now_c = std::chrono::system_clock::to_time_t(now);
         std::tm tm = *std::localtime(&now_c);
 
-        ses.post_dht_stats(); // request DHT stats
-
+        ses.post_dht_stats();
         std::vector<libtorrent::alert*> alerts;
         ses.pop_alerts(&alerts);
 
@@ -235,83 +275,63 @@ int main(int argc, char* argv[]) {
             switch (a->type()) {
                 case libtorrent::dht_stats_alert::alert_type: {
                     auto* st = libtorrent::alert_cast<libtorrent::dht_stats_alert>(a);
-                    for (auto const& bucket : st->routing_table) {
+                    for (auto const& bucket : st->routing_table)
                         dht_nodes += bucket.num_nodes;
-                    }
                     break;
                 }
                 case libtorrent::listen_failed_alert::alert_type: {
                     auto* lf = libtorrent::alert_cast<libtorrent::listen_failed_alert>(a);
                     std::cerr << std::put_time(&tm, "%F %T") << " Failed to bind to "
-                            << lf->address.to_string() << ":" << lf->port
-                            << " - " << lf->message() << "\n";
+                              << lf->address.to_string() << ":" << lf->port
+                              << " - " << lf->message() << "\n";
                     return 1;
-                    break;
-                }
-                case libtorrent::listen_succeeded_alert::alert_type: {
-                    auto* ls = libtorrent::alert_cast<libtorrent::listen_succeeded_alert>(a);
-                    // TODO why is this printed two times? for TCP and UDP?
-                    std::cout << std::put_time(&tm, "%F %T") << " Listening succeeded on "
-                            << ls->address.to_string() << ":" << ls->port << "\n";
-                    break;
-                }
-                case libtorrent::log_alert::alert_type: {
-                    auto* log = libtorrent::alert_cast<libtorrent::log_alert>(a);
-                    if (log) {
-                        if (log->category() & libtorrent::alert_category::session_log) {
-                            std::cout << std::put_time(&tm, "%F %T") << " [session] " << log->message() << std::endl;
-                        }
-                        else if (log->category() & libtorrent::alert_category::dht_log) {
-                            std::cout << std::put_time(&tm, "%F %T") << " [dht] " << log->message() << std::endl;
-                        }
-                        else if (log->category() & libtorrent::alert_category::port_mapping_log) {
-                            std::cout << std::put_time(&tm, "%F %T") << " [portmap] " << log->message() << std::endl;
-                        }
-                        else {
-                            std::cout << std::put_time(&tm, "%F %T") << " [other] " << log->message() << std::endl;
-                        }
-                    }
-                    break;
                 }
             }
         }
 
-        // std::cout << std::put_time(&tm, "%F %T") << " DHT nodes: " << dht_nodes << std::endl;
-
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::steady_clock::now() - start_time).count();
+            std::chrono::steady_clock::now() - start_time).count();
 
         std::cout << std::put_time(&tm, "%F %T")
-                << " connected to " << dht_nodes
-                << " DHT nodes after " << elapsed << " seconds"
-                << std::endl;
+                  << " connected to " << dht_nodes
+                  << " DHT nodes after " << elapsed << " seconds" << std::endl;
 
         if (stop_time > 0 && elapsed >= stop_time) {
-            // return 1 if no DHT nodes are connected
             int return_code = (dht_nodes == 0) ? 1 : 0;
             std::cout << std::put_time(&tm, "%F %T")
-                    << " Stopping after " << stop_time << " seconds"
-                    << " with " << dht_nodes << " DHT nodes -> return " << return_code
-                    << std::endl;
+                      << " Stopping after " << stop_time << " seconds"
+                      << " with " << dht_nodes << " DHT nodes -> return " << return_code
+                      << std::endl;
             return return_code;
         }
 
         if (stop_nodes > 0 && dht_nodes >= stop_nodes) {
             std::cout << std::put_time(&tm, "%F %T")
-                    << " Stopping with " << stop_nodes << " or more DHT nodes"
-                    << std::endl;
+                      << " Stopping with " << stop_nodes << " or more DHT nodes" << std::endl;
             return 0;
         }
 
-        // re-send DHT query every N seconds
         auto now_steady = std::chrono::steady_clock::now();
         if (now_steady - last_dht_query >= std::chrono::seconds(sleep_query)) {
-            if (is_random_hash)
-            {
+            current_btih_index = (current_btih_index + 1) % btih_list.size();
+            const std::string& hstr = btih_list[current_btih_index];
+            if (hstr == "random") {
                 test_hash = random_sha1();
-                to_hex(test_hash) = to_hex(test_hash);
+            } else {
+                try {
+                    auto bytes = base16decode(hstr);
+                    std::memcpy(test_hash.data(), bytes.data(), 20);
+                } catch (const std::exception& e) {
+                    std::cerr << "warning: invalid btih at index "
+                              << current_btih_index << ": " << e.what() << std::endl;
+                    test_hash = random_sha1();
+                }
             }
-            std::cout << std::put_time(&tm, "%F %T") << " Sending DHT query for btih " << to_hex(test_hash) << std::endl;
+
+            std::cout << std::put_time(&tm, "%F %T")
+                      << " Sending DHT query for btih " << to_hex(test_hash)
+                      << " (index " << current_btih_index << ")" << std::endl;
+
             ses.dht_get_peers(test_hash);
             last_dht_query = now_steady;
         }
