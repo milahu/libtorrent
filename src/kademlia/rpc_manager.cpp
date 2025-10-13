@@ -261,8 +261,13 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 
 	if (m_destructing) return false;
 
+	// create a mutable copy for: local_m_addr = i->second->target_ep()
+	// TODO is this enough? or is m.addr used somewhere else?
+	// then we would have to modify m.addr
+	udp::endpoint local_m_addr = m.addr;
+
 	std::cout << "[rpc_manager::incoming] got message"
-			  << " source=" << print_endpoint(m.addr)
+			  << " source=" << print_endpoint(local_m_addr)
 			  << " type=" << m.message.dict_find_string_value("y").to_string()
 			  << std::endl;
 
@@ -291,7 +296,9 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	if (range.first == range.second)
 		std::cout << "[rpc_manager::incoming] no matching transaction for tid=" << tid << std::endl;
 
-	if (std::getenv("LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS") != std::string("1"))
+	const char* env_dont_check_src_addr = std::getenv("LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS");
+
+	if (env_dont_check_src_addr == nullptr || env_dont_check_src_addr != std::string("1"))
 	{
 	// LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS=0
 	// old code with debug prints
@@ -300,18 +307,18 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	{
 		std::cout << "[rpc_manager::incoming] checking transaction expected from "
 		          << print_endpoint(i->second->target_ep())
-		          << " (our m.addr=" << print_endpoint(m.addr) << ")" << std::endl;
-		if (m.addr.address() != i->second->target_ep().address()
-		    || m.addr.port() != i->second->target_ep().port())
+		          << " (our m.addr=" << print_endpoint(local_m_addr) << ")" << std::endl;
+		if (local_m_addr.address() != i->second->target_ep().address()
+		    || local_m_addr.port() != i->second->target_ep().port())
 		{
 			// FIXME this breaks in containers / high-availability network setups
 			// where the public IP address is assigned to the "lo" interface
 			// so DHT response packets appear to come from our own public IP address
 			std::cout << "[rpc_manager::incoming] DROPPED candidate: address mismatch "
 			          << "(expected " << print_endpoint(i->second->target_ep())
-			          << ", got " << print_endpoint(m.addr) << ")" << std::endl;
+			          << ", got " << print_endpoint(local_m_addr) << ")" << std::endl;
 		}
-		if (m.addr.address() != i->second->target_addr()) continue;
+		if (local_m_addr.address() != i->second->target_addr()) continue;
 		std::cout << "[rpc_manager::incoming] MATCHED transaction for tid=" << tid << std::endl;
 		o = i->second;
 		i = m_transactions.erase(i);
@@ -335,30 +342,60 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 		transaction_idx++;
 	}
 
+	#if false
 	if (range.first != range.second)
 	{
-		// FIXME make this optional
-		// and only allow this if i->second->target_ep().address()
-		// is one of our own (public) IP addresses that we are listening on
 
 		// pick the first observer that matches the transaction ID, ignoring source IP
 		o = range.first->second;
 		m_transactions.erase(range.first);
 
 		std::cout << "[rpc_manager::incoming] matched transaction id=" << tid
-				<< " ignoring source IP " << print_endpoint(m.addr)
+				<< " ignoring source IP " << print_endpoint(local_m_addr)
 				<< " (target was " << print_endpoint(o->target_ep()) << ")"
 				<< std::endl;
 	}
+	#else
+	for (auto i = range.first; i != range.second; ++i)
+	{
+		std::cout << "[rpc_manager::incoming] checking transaction expected from "
+		          << print_endpoint(i->second->target_ep())
+		          << " (our m.addr=" << print_endpoint(local_m_addr) << ")" << std::endl;
+		if (local_m_addr.address() != i->second->target_ep().address()
+		    || local_m_addr.port() != i->second->target_ep().port())
+		{
+			std::cout << "[rpc_manager::incoming] not dropping response"
+			          << " from " << print_endpoint(local_m_addr)
+			          << " -> using cached source address " << print_endpoint(i->second->target_ep())
+			          << std::endl;
+		}
+		// dont check source address, use cached source address i->second
+		// this breaks in containers / high-availability network setups
+		// where the public IP address is assigned to the "lo" interface
+		// so DHT response packets appear to come from our own public IP address
+		//
+		// if (local_m_addr.address() != i->second->target_addr()) continue;
+		if (local_m_addr.address() != i->second->target_addr())
+		{
+			// FIXME make this conditional: only do this if we listen on local_m_addr
+			// patch a wrong local_m_addr
+			local_m_addr = i->second->target_ep();
+		}
+		std::cout << "[rpc_manager::incoming] MATCHED transaction for tid=" << tid << std::endl;
+		o = i->second;
+		i = m_transactions.erase(i);
+		break;
+	}
+	#endif
 	}
 
 	if (!o)
 	{
 #ifndef TORRENT_DISABLE_LOGGING
-		if (m_table.native_endpoint(m.addr) && m_log->should_log(dht_logger::rpc_manager))
+		if (m_table.native_endpoint(local_m_addr) && m_log->should_log(dht_logger::rpc_manager))
 		{
 			m_log->log(dht_logger::rpc_manager, "reply with unknown transaction id size: %d from %s"
-				, int(transaction_id.size()), print_endpoint(m.addr).c_str());
+				, int(transaction_id.size()), print_endpoint(local_m_addr).c_str());
 		}
 #endif
 		// this isn't necessarily because the other end is doing
@@ -368,9 +405,9 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 		// attack.
 //		entry e;
 //		incoming_error(e, "invalid transaction id");
-//		m_sock->send_packet(e, m.addr);
+//		m_sock->send_packet(e, local_m_addr);
 		std::cout << "[rpc_manager::incoming] no valid observer found for "
-		          << print_endpoint(m.addr)
+		          << print_endpoint(local_m_addr)
 		          << " → dropping message" << std::endl;
 		return false;
 	}
@@ -382,7 +419,7 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	{
 		m_log->log(dht_logger::rpc_manager, "[%u] round trip time(ms): %" PRId64 " from %s"
 			, o->algorithm()->id(), total_milliseconds(now - o->sent())
-			, print_endpoint(m.addr).c_str());
+			, print_endpoint(local_m_addr).c_str());
 	}
 #endif
 
@@ -399,14 +436,14 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 			{
 				m_log->log(dht_logger::rpc_manager, "[%u] reply with error from %s: (%" PRId64 ") %s"
 					, o->algorithm()->id()
-					, print_endpoint(m.addr).c_str()
+					, print_endpoint(local_m_addr).c_str()
 					, err.list_int_value_at(0)
 					, err.list_string_value_at(1).to_string().c_str());
 			}
 			else
 			{
 				m_log->log(dht_logger::rpc_manager, "[%u] reply with (malformed) error from %s"
-					, o->algorithm()->id(), print_endpoint(m.addr).c_str());
+					, o->algorithm()->id(), print_endpoint(local_m_addr).c_str());
 			}
 		}
 #endif
@@ -420,7 +457,7 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 		// we should call o->timeout() instead of o->reply(m) because o->reply()
 		// will call algorithm->finished().
 		std::cout << "[rpc_manager::incoming] got ERROR reply from "
-		          << print_endpoint(m.addr) << std::endl;
+		          << print_endpoint(local_m_addr) << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -442,10 +479,10 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	}
 
 	node_id const nid = node_id(node_id_ent.string_ptr());
-	if (m_settings.get_bool(settings_pack::dht_enforce_node_id) && !verify_id(nid, m.addr.address()))
+	if (m_settings.get_bool(settings_pack::dht_enforce_node_id) && !verify_id(nid, local_m_addr.address()))
 	{
 		std::cout << "[rpc_manager::incoming] verify_id failed for "
-		          << print_endpoint(m.addr) << std::endl;
+		          << print_endpoint(local_m_addr) << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -455,11 +492,11 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	{
 		m_log->log(dht_logger::rpc_manager, "[%u] reply with transaction id: %d from %s"
 			, o->algorithm()->id(), int(transaction_id.size())
-			, print_endpoint(m.addr).c_str());
+			, print_endpoint(local_m_addr).c_str());
 	}
 #endif
 	std::cout << "[rpc_manager::incoming] valid DHT reply from "
-	          << print_endpoint(m.addr) << std::endl;
+	          << print_endpoint(local_m_addr) << std::endl;
 
 	o->reply(m);
 	*id = nid;
@@ -468,7 +505,7 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 
 	// we found an observer for this reply, hence the node is not spoofing
 	// add it to the routing table
-	return m_table.node_seen(*id, m.addr, rtt);
+	return m_table.node_seen(*id, local_m_addr, rtt);
 }
 
 time_duration rpc_manager::tick()
