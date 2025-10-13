@@ -261,6 +261,11 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 
 	if (m_destructing) return false;
 
+	std::cout << "[rpc_manager::incoming] got message"
+			  << " source=" << print_endpoint(m.addr)
+			  << " type=" << m.message.dict_find_string_value("y").to_string()
+			  << std::endl;
+
 	// we only deal with replies and errors, not queries
 	TORRENT_ASSERT(m.message.dict_find_string_value("y") == "r"
 		|| m.message.dict_find_string_value("y") == "e");
@@ -269,19 +274,82 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	// request list, ignore the packet
 
 	auto transaction_id = m.message.dict_find_string_value("t");
+	if (transaction_id.empty()) {
+		std::cout << "[rpc_manager::incoming] missing transaction id" << std::endl;
+	}
 	if (transaction_id.empty()) return false;
 
 	auto ptr = transaction_id.begin();
 	std::uint16_t const tid = transaction_id.size() != 2 ? std::uint64_t(0xffff) : aux::read_uint16(ptr);
 
+	std::cout << "[rpc_manager::incoming] transaction id=" << tid
+	          << " size=" << transaction_id.size() << std::endl;
+
 	observer_ptr o;
 	auto range = m_transactions.equal_range(tid);
+
+	if (range.first == range.second)
+		std::cout << "[rpc_manager::incoming] no matching transaction for tid=" << tid << std::endl;
+
+	if (std::getenv("LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS") != std::string("1"))
+	{
+	// LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS=0
+	// old code with debug prints
+	std::cout << "[rpc_manager::incoming] LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS=0 -> old code" << std::endl;
 	for (auto i = range.first; i != range.second; ++i)
 	{
+		std::cout << "[rpc_manager::incoming] checking transaction expected from "
+		          << print_endpoint(i->second->target_ep())
+		          << " (our m.addr=" << print_endpoint(m.addr) << ")" << std::endl;
+		if (m.addr.address() != i->second->target_ep().address()
+		    || m.addr.port() != i->second->target_ep().port())
+		{
+			// FIXME this breaks in containers / high-availability network setups
+			// where the public IP address is assigned to the "lo" interface
+			// so DHT response packets appear to come from our own public IP address
+			std::cout << "[rpc_manager::incoming] DROPPED candidate: address mismatch "
+			          << "(expected " << print_endpoint(i->second->target_ep())
+			          << ", got " << print_endpoint(m.addr) << ")" << std::endl;
+		}
 		if (m.addr.address() != i->second->target_addr()) continue;
+		std::cout << "[rpc_manager::incoming] MATCHED transaction for tid=" << tid << std::endl;
 		o = i->second;
 		i = m_transactions.erase(i);
 		break;
+	}
+	}
+	else
+	{
+	// LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS=1
+	// new code with debug prints
+	std::cout << "[rpc_manager::incoming] LIBTORRENT_DONT_CHECK_DHT_SOURCE_ADDRESS=1 -> new code" << std::endl;
+
+	// debug: print all transactions
+	int transaction_idx = 0;
+	for (auto i = range.first; i != range.second; ++i)
+	{
+		std::cout << "[rpc_manager::incoming] transaction"
+			<< " transaction_idx=" << transaction_idx
+			<< " source=" << print_endpoint(i->second->target_ep())
+			<< std::endl;
+		transaction_idx++;
+	}
+
+	if (range.first != range.second)
+	{
+		// FIXME make this optional
+		// and only allow this if i->second->target_ep().address()
+		// is one of our own (public) IP addresses that we are listening on
+
+		// pick the first observer that matches the transaction ID, ignoring source IP
+		o = range.first->second;
+		m_transactions.erase(range.first);
+
+		std::cout << "[rpc_manager::incoming] matched transaction id=" << tid
+				<< " ignoring source IP " << print_endpoint(m.addr)
+				<< " (target was " << print_endpoint(o->target_ep()) << ")"
+				<< std::endl;
+	}
 	}
 
 	if (!o)
@@ -301,6 +369,9 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 //		entry e;
 //		incoming_error(e, "invalid transaction id");
 //		m_sock->send_packet(e, m.addr);
+		std::cout << "[rpc_manager::incoming] no valid observer found for "
+		          << print_endpoint(m.addr)
+		          << " → dropping message" << std::endl;
 		return false;
 	}
 
@@ -348,6 +419,8 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 		// should call algorithm->failed(). From this point of view,
 		// we should call o->timeout() instead of o->reply(m) because o->reply()
 		// will call algorithm->finished().
+		std::cout << "[rpc_manager::incoming] got ERROR reply from "
+		          << print_endpoint(m.addr) << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -355,6 +428,7 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	bdecode_node const ret_ent = m.message.dict_find_dict("r");
 	if (!ret_ent)
 	{
+		std::cout << "[rpc_manager::incoming] missing dict 'r' → timeout" << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -362,6 +436,7 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	bdecode_node const node_id_ent = ret_ent.dict_find_string("id");
 	if (!node_id_ent || node_id_ent.string_length() != 20)
 	{
+		std::cout << "[rpc_manager::incoming] invalid or missing 'id' field → timeout" << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -369,6 +444,8 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	node_id const nid = node_id(node_id_ent.string_ptr());
 	if (m_settings.get_bool(settings_pack::dht_enforce_node_id) && !verify_id(nid, m.addr.address()))
 	{
+		std::cout << "[rpc_manager::incoming] verify_id failed for "
+		          << print_endpoint(m.addr) << std::endl;
 		o->timeout();
 		return false;
 	}
@@ -381,6 +458,9 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 			, print_endpoint(m.addr).c_str());
 	}
 #endif
+	std::cout << "[rpc_manager::incoming] valid DHT reply from "
+	          << print_endpoint(m.addr) << std::endl;
+
 	o->reply(m);
 	*id = nid;
 
