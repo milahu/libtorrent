@@ -64,7 +64,7 @@ void print_help(const char* prog) {
         << "Options:\n"
         << "  --help             Show this help text and exit\n"
         << "  --bind <iface>     Bind to the given network interface (e.g. eth0)\n"
-        << "  --port <port>      Set listening port for TCP/UDP/DHT (default: 6881)\n"
+        << "  --port <port>      Set listening port for TCP/UDP/DHT (default: 0 = random)\n"
         << "  --btih <btih>      Add a BTIH (40-char hex or 'random') to the query list (can repeat)\n"
         << "  --btih-file <path> Read one or more BTIHs (40-char hex or 'random') from file\n"
         << "  --sleep-print <N>  Print number of DHT peers every N seconds (default: 1)\n"
@@ -114,7 +114,7 @@ std::vector<unsigned char> base16decode(const std::string& hex)
 
 int main(int argc, char* argv[]) {
     std::string bind_iface;
-    int listen_port = 6881; // default port
+    int listen_port = 0; // default port. 0 = use random port
     int sleep_print = 1;
     int sleep_query = 5;
     int stop_nodes = 0;
