@@ -60,6 +60,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <type_traits>
 #include <functional>
 
+#include <iostream>
+
 #ifndef TORRENT_DISABLE_LOGGING
 #include <cinttypes> // for PRId64 et.al.
 #endif
@@ -504,6 +506,22 @@ bool rpc_manager::invoke(entry& e, udp::endpoint const& target_addr
 			, print_endpoint(target_addr).c_str());
 	}
 #endif
+
+	{
+		std::vector<char> buf;
+		bencode(std::back_inserter(buf), e);
+		// decode back to bdecode_node for print_entry
+		error_code ec;
+		bdecode_node n;
+		bdecode(buf.data(), buf.data() + buf.size(), n, ec);
+		if (ec)
+			std::cerr << "[rpc_manager::invoke] bdecode failed: " << ec.message() << std::endl;
+		std::cout << "[rpc_manager::invoke] sending DHT message to "
+		          << print_endpoint(target_addr)
+		          // << " size=" << buf.size()
+		          << " data=" << print_entry(n, 1)
+		          << std::endl;
+	}
 
 	if (m_sock_man->send_packet(m_sock, e, target_addr))
 	{

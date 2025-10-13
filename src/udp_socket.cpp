@@ -282,7 +282,7 @@ int udp_socket::read(span<packet> pkts, error_code& ec)
 			          << " from=" << p.from
 					  << " local=" << local_ep_str
 			          << " len=" << len
-			          << " data=" << escape_bytes(m_buf->data(), len)
+			          // << " data=" << escape_bytes(m_buf->data(), len)
 			          << std::endl;
 
 			// handle proxy unwrapping
@@ -447,7 +447,7 @@ void udp_socket::send(udp::endpoint const& ep, span<char const> p
 	{
 		std::cout << "[udp_socket::send] send_to SUCCESS dest=" << ep
 		          << " size=" << p.size()
-		          << " data=" << escape_bytes(p.data(), static_cast<std::size_t>(p.size()))
+		          // << " data=" << escape_bytes(p.data(), static_cast<std::size_t>(p.size()))
 		          << std::endl;
 	}
 }

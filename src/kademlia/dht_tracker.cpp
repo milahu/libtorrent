@@ -36,6 +36,12 @@ POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <iostream>
+
+// escape_bytes
+#include <iomanip>
+#include <sstream>
+
 #include "libtorrent/kademlia/dht_tracker.hpp"
 
 #include <libtorrent/config.hpp>
@@ -57,6 +63,17 @@ POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 using namespace std::placeholders;
+
+std::string escape_bytes(const char* data, size_t len) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char c = static_cast<unsigned char>(data[i]);
+        if (std::isprint(c)) oss << data[i];
+        else oss << "\\x" << std::setw(2) << int(c);
+    }
+    return oss.str();
+}
 
 namespace libtorrent { namespace dht {
 
@@ -552,8 +569,18 @@ namespace libtorrent { namespace dht {
 #ifndef TORRENT_DISABLE_LOGGING
 			m_log->log_packet(dht_logger::incoming_message, buf, ep);
 #endif
+			std::cout << "[dht_tracker::incoming_packet] failed to bdecode message from "
+			          << ep << ": " << err.message()
+			          << " at pos " << pos
+			          << " size=" << buf_size
+			          << " data=" << escape_bytes(buf.data(), buf_size)
+			          << std::endl;
 			return false;
 		}
+
+		std::cout << "[dht_tracker::incoming] received DHT message from "
+		          << ep << ": " << print_entry(m_msg, 1)
+		          << std::endl;
 
 		if (m_msg.type() != bdecode_node::dict_t)
 		{

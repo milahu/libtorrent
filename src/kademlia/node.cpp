@@ -44,6 +44,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <tuple>
 #include <array>
 
+#include <iostream>
+
 #ifndef TORRENT_DISABLE_LOGGING
 #include "libtorrent/hex.hpp" // to_hex
 #endif
@@ -274,8 +276,23 @@ void node::incoming(aux::listen_socket_handle const& s, msg const& m)
 //		entry e;
 //		incoming_error(e, "missing 'y' entry");
 //		m_sock.send_packet(e, m.addr);
+		/*
+		std::cout << "[node::incoming] ignoring broken msg from " << m.addr
+				  // << " msg=" << m.message.to_string()
+				  << " msg=" << print_entry(m.message, 1)
+				  << std::endl;
+		*/
 		return;
 	}
+
+	/*
+	std::cout << "[node::incoming] msg from " << m.addr
+			  // << " msg=" << m.message.to_string()
+			  << " msg=" << print_entry(m.message, 1)
+			  // << " type=" << m.message.dict_find_string_value("y").to_string()
+			  // << " q=" << m.message.dict_find_string_value("q").to_string()
+			  << std::endl;
+	*/
 
 	char const y = *(y_ent.string_ptr());
 
