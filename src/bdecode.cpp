@@ -48,6 +48,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #define BOOST_SYSTEM_NOEXCEPT throw()
 #endif
 
+#define BDECODE_PRINT_FULL_STINGS true
+
 namespace libtorrent {
 
 	using aux::bdecode_token;
@@ -1096,6 +1098,9 @@ done:
 		ret += "'";
 		if (printable)
 		{
+			#if BDECODE_PRINT_FULL_STINGS
+			ret.append(str.data(), std::size_t(len));
+			#else
 			if (single_line && len > 30)
 			{
 				ret.append(str.data(), 14);
@@ -1104,9 +1109,13 @@ done:
 			}
 			else
 				ret.append(str.data(), std::size_t(len));
+			#endif
 			ret += "'";
 			return;
 		}
+		#if BDECODE_PRINT_FULL_STINGS
+		aux::escape_string(ret, str.data(), len);
+		#else
 		if (single_line && len > 32)
 		{
 			aux::escape_string(ret, str.data(), 25);
@@ -1117,6 +1126,7 @@ done:
 		{
 			aux::escape_string(ret, str.data(), len);
 		}
+		#endif
 		ret += "'";
 	}
 
