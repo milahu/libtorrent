@@ -6039,7 +6039,7 @@ namespace {
 					<< " is_global=" << global
 					<< " ssl=" << (s->ssl == transport::ssl)
 					// << " flags=" << s->flags
-					<< " is_local_network=" << (s->flags & listen_socket_t::local_network)
+					<< " is_local_network=" << bool(s->flags & listen_socket_t::local_network)
 					<< std::endl;
 
 			if (
