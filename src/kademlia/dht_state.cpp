@@ -32,6 +32,8 @@ POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <iostream>
+
 #include "libtorrent/kademlia/dht_state.hpp"
 
 #include <libtorrent/bdecode.hpp>
@@ -112,6 +114,12 @@ namespace {
 			ret.nodes = aux::read_endpoint_list<udp::endpoint>(nodes);
 		if (bdecode_node const nodes = e.dict_find_list("nodes6"))
 			ret.nodes6 = aux::read_endpoint_list<udp::endpoint>(nodes);
+		std::cout << "[libtorrent::dht::read_dht_state] ret.nodes:";
+		for (auto n : ret.nodes) std::cout << " " << print_endpoint(n);
+		std::cout << std::endl;
+		std::cout << "[libtorrent::dht::read_dht_state] ret.nodes6:";
+		for (auto n : ret.nodes6) std::cout << " " << print_endpoint(n);
+		std::cout << std::endl;
 		return ret;
 	}
 

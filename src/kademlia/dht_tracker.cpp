@@ -528,6 +528,16 @@ namespace libtorrent { namespace dht {
 		int const buf_size = int(buf.size());
 		if (buf_size <= 20
 			|| buf.front() != 'd'
+			|| buf.back() != 'e')
+		{
+			std::cout << "[dht_tracker::incoming_packet] dropping DHT message via size/prefix/suffix"
+					<< " from " << ep
+					<< " size=" << buf_size
+					<< " data=" << escape_bytes(buf.data(), buf_size)
+					<< std::endl;
+		}
+		if (buf_size <= 20
+			|| buf.front() != 'd'
 			|| buf.back() != 'e') return false;
 
 		m_counters.inc_stats_counter(counters::dht_bytes_in, buf_size);
@@ -548,6 +558,11 @@ namespace libtorrent { namespace dht {
 			if (std::find(std::begin(class_a), std::end(class_a), b[0]) != std::end(class_a))
 			{
 				m_counters.inc_stats_counter(counters::dht_messages_in_dropped);
+				std::cout << "[dht_tracker::incoming_packet] dropping DHT message via class_a"
+						<< " from " << ep
+						<< " size=" << buf_size
+						<< " data=" << escape_bytes(buf.data(), buf_size)
+						<< std::endl;
 				return true;
 			}
 		}
@@ -555,6 +570,11 @@ namespace libtorrent { namespace dht {
 		if (!m_blocker.incoming(ep.address(), clock_type::now(), m_log))
 		{
 			m_counters.inc_stats_counter(counters::dht_messages_in_dropped);
+			std::cout << "[dht_tracker::incoming_packet] dropping DHT message via m_blocker"
+			          << " from " << ep
+			          << " size=" << buf_size
+			          << " data=" << escape_bytes(buf.data(), buf_size)
+			          << std::endl;
 			return true;
 		}
 
@@ -578,7 +598,7 @@ namespace libtorrent { namespace dht {
 			return false;
 		}
 
-		std::cout << "[dht_tracker::incoming] received DHT message from "
+		std::cout << "[dht_tracker::incoming_packet] received DHT message from "
 		          << ep << ": " << print_entry(m_msg, 1)
 		          << std::endl;
 
@@ -596,6 +616,7 @@ namespace libtorrent { namespace dht {
 		m_log->log_packet(dht_logger::incoming_message, buf, ep);
 #endif
 
+		// call rpc_manager::incoming
 		libtorrent::dht::msg const m(m_msg, ep);
 		for (auto& n : m_nodes)
 			n.second.dht.incoming(s, m);

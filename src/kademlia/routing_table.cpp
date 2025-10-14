@@ -45,6 +45,11 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <cinttypes> // for PRId64 et.al.
 #include <cstdint>
 
+#include <iostream>
+
+#include <iomanip> // for std::hex, std::setw, std::setfill
+#include <sstream>
+
 #include "libtorrent/config.hpp"
 
 #include <libtorrent/hex.hpp> // to_hex
@@ -59,6 +64,17 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "libtorrent/aux_/invariant_check.hpp"
 #include "libtorrent/address.hpp"
 #include "libtorrent/aux_/array.hpp"
+
+std::string node_id_to_hex(libtorrent::dht::node_id const& id)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (int i = 0; i < 20; ++i)
+    {
+        oss << std::setw(2) << (static_cast<unsigned>(id[i]) & 0xff);
+    }
+    return oss.str();
+}
 
 using namespace std::placeholders;
 
@@ -1095,6 +1111,9 @@ void routing_table::heard_about(node_id const& id, udp::endpoint const& ep)
 // id)
 bool routing_table::node_seen(node_id const& id, udp::endpoint const& ep, int const rtt)
 {
+	std::cout << "[routing_table::node_seen] node=" << node_id_to_hex(id)
+		<< " addr=" << ep.address().to_string() << ":" << ep.port()
+		<< " rtt=" << rtt << "ms\n";
 	return verify_node_address(m_settings, id, ep.address()) && add_node(node_entry(id, ep, rtt, true));
 }
 

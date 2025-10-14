@@ -34,6 +34,8 @@ POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <iostream>
+
 #include <libtorrent/kademlia/traversal_algorithm.hpp>
 #include <libtorrent/kademlia/rpc_manager.hpp>
 #include <libtorrent/kademlia/node.hpp>
@@ -693,6 +695,19 @@ void look_for_nodes(char const* nodes_key, udp const& protocol, bdecode_node con
 		char const* nodes = n.string_ptr();
 		char const* end = nodes + n.string_length();
 		int const protocol_size = int(aux::address_size(protocol));
+
+		// debug print
+		std::cout << "traversal_observer::reply look_for_nodes"
+			<< " nodes_key=" << nodes_key
+			<< " nodes:";
+		// read_node_endpoint modifies nodes
+		while (end - nodes >= 20 + protocol_size + 2)
+		{
+			std::cout << " " << print_endpoint(read_node_endpoint(protocol, nodes).ep);
+		}
+		std::cout << std::endl;
+		// reset nodes
+		nodes = n.string_ptr();
 
 		while (end - nodes >= 20 + protocol_size + 2)
 		{

@@ -903,6 +903,13 @@ void node::incoming_request(msg const& m, entry& e)
 			m_observer->log(dht_logger::node, "values: %d"
 				, int(reply["values"].list().size()));
 		}
+		if (reply.find_key("values"))
+		{
+			// TODO decode peer addr + port
+			std::cout << "node::incoming_request reply values: "
+				// << print_entry(reply["values"], 1) << std::endl;
+				<< reply["values"] << std::endl;
+		}
 #endif
 	}
 	else if (query == "find_node")

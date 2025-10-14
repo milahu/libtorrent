@@ -61,6 +61,18 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <functional>
 
 #include <iostream>
+#include <typeinfo>
+#include <cxxabi.h>
+#include <memory>
+
+std::string demangle(const char* name) {
+    int status = 0;
+    std::unique_ptr<char, void(*)(void*)> res{
+        abi::__cxa_demangle(name, nullptr, nullptr, &status),
+        std::free
+    };
+    return (status == 0) ? res.get() : name;
+}
 
 #ifndef TORRENT_DISABLE_LOGGING
 #include <cinttypes> // for PRId64 et.al.
@@ -498,6 +510,15 @@ bool rpc_manager::incoming(msg const& m, node_id* id)
 	std::cout << "[rpc_manager::incoming] valid DHT reply from "
 	          << print_endpoint(local_m_addr) << std::endl;
 
+	// call observer::reply
+	//   find_data_observer::reply
+	//   get_item_observer::reply
+	//   get_peers_observer::reply
+	//   obfuscated_get_peers_observer::reply
+	//   sample_infohashes_observer::reply
+	//   traversal_observer::reply
+	std::cout << "[rpc_manager::incoming] calling "
+	          << demangle(typeid(*o).name()) << "::reply" << std::endl;
 	o->reply(m);
 	*id = nid;
 

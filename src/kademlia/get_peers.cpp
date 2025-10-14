@@ -35,6 +35,8 @@ POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <iostream>
+
 #include <libtorrent/kademlia/get_peers.hpp>
 #include <libtorrent/kademlia/node.hpp>
 #include <libtorrent/kademlia/dht_observer.hpp>
@@ -58,6 +60,7 @@ void get_peers_observer::reply(msg const& m)
 			, algorithm()->id());
 #endif
 		timeout();
+		std::cout << "[get_peers_observer::reply] missing response dict" << std::endl;
 		return;
 	}
 
@@ -73,6 +76,14 @@ void get_peers_observer::reply(msg const& m)
 			char const* peers = n.list_at(0).string_ptr();
 			char const* end = peers + n.list_at(0).string_length();
 
+			std::cout << "[get_peers_observer::reply] got " << int((end - peers) / 6) << " peers in mainline format:";
+			// read_v4_endpoint modifies peers
+			while (end - peers >= 6)
+				std::cout << " " << print_endpoint(aux::read_v4_endpoint<tcp::endpoint>(peers));
+			std::cout << std::endl;
+			// reset peers
+			peers = n.list_at(0).string_ptr();
+
 #ifndef TORRENT_DISABLE_LOGGING
 			log_peers(m, r, int((end - peers) / 6));
 #endif
@@ -83,12 +94,26 @@ void get_peers_observer::reply(msg const& m)
 		{
 			// assume it's uTorrent/libtorrent format
 			peer_list = aux::read_endpoint_list<tcp::endpoint>(n);
+
+			std::cout << "[get_peers_observer::reply] got " << peer_list.size() << " peers in uTorrent/libtorrent format:";
+			for (auto addr : peer_list)
+			{
+				std::cout << " " << print_endpoint(addr);
+			}
+			std::cout << std::endl;
+
 #ifndef TORRENT_DISABLE_LOGGING
 			log_peers(m, r, n.list_size());
 #endif
 		}
 		static_cast<get_peers*>(algorithm())->got_peers(peer_list);
 	}
+	else
+	{
+		std::cout << "[get_peers_observer::reply] got no peer values" << std::endl;
+	}
+
+	// NOTE the "nodes" and "nodes6" values are parsed in traversal_observer::reply
 
 	find_data_observer::reply(m);
 }

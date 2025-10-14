@@ -45,6 +45,8 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <set>
 #include <string>
 
+#include <iostream>
+
 #include <libtorrent/socket_io.hpp>
 #include <libtorrent/aux_/time.hpp>
 #include <libtorrent/config.hpp>
@@ -258,6 +260,13 @@ namespace {
 				if (!peersv.empty() && protocol == tcp::v6())
 					to_pick /= 4;
 				entry::list_type& pe = peers["values"].list();
+
+				std::cout << "dht_default_storage::get_peers peers values:" << std::endl;
+				for (auto peers_value : pe) {
+					// TODO decode peer addr + port
+					// std::cout << "  - " << print_entry(peers_value, 1) << std::endl;
+					std::cout << "  - " << peers_value << std::endl;
+				}
 
 				int candidates = int(std::count_if(peersv.begin(), peersv.end()
 					, [=](peer_entry const& e) { return !(noseed && e.seed); }));
