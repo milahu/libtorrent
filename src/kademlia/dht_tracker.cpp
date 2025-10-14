@@ -243,6 +243,7 @@ namespace libtorrent { namespace dht {
 	std::vector<lt::dht::dht_status> dht_tracker::dht_status() const
 	{
 		std::vector<lt::dht::dht_status> ret;
+		// call: dht_status node::status()
 		for (auto& n : m_nodes)
 			ret.emplace_back(n.second.dht.status());
 		return ret;

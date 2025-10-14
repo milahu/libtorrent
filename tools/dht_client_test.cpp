@@ -277,6 +277,26 @@ int main(int argc, char* argv[]) {
                     auto* st = libtorrent::alert_cast<libtorrent::dht_stats_alert>(a);
                     for (auto const& bucket : st->routing_table)
                         dht_nodes += bucket.num_nodes;
+                    for (auto const& bucket : st->routing_table)
+                    {
+                        std::cout << std::put_time(&tm, "%F %T") << " DHT routing table bucket:\n";
+                        std::cout << "  " << bucket.live_nodes.size() << " live nodes:\n";
+                        for (auto const& n : bucket.live_nodes)
+                        {
+                            std::cout << "    " << n.ep.address().to_string()
+                                    << ":" << n.ep.port()
+                                    << " id=" << to_hex(n.id)
+                                    << " rtt=" << n.rtt << "ms\n";
+                        }
+                        std::cout << "  " << bucket.replacement_nodes.size() << " replacement nodes:\n";
+                        for (auto const& n : bucket.replacement_nodes)
+                        {
+                            std::cout << "    " << n.ep.address().to_string()
+                                    << ":" << n.ep.port()
+                                    << " id=" << to_hex(n.id)
+                                    << " rtt=" << n.rtt << "ms\n";
+                        }
+                    }
                     break;
                 }
                 case libtorrent::listen_failed_alert::alert_type: {

@@ -115,6 +115,13 @@ namespace libtorrent {
 		meta
 	};
 
+	struct TORRENT_EXPORT dht_routing_node
+	{
+		sha1_hash id;
+		udp::endpoint ep;
+		int rtt;
+	};
+
 	// struct to hold information about a single DHT routing table bucket
 	struct TORRENT_EXPORT dht_routing_bucket
 	{
@@ -125,6 +132,11 @@ namespace libtorrent {
 
 		// number of seconds since last activity
 		int last_active;
+
+		// debug: get connected DHT nodes
+		// these values are populated in routing_table::status
+		std::vector<dht_routing_node> live_nodes;
+		std::vector<dht_routing_node> replacement_nodes;
 	};
 
 TORRENT_VERSION_NAMESPACE_3

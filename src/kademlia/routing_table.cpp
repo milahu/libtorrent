@@ -313,6 +313,27 @@ void routing_table::status(std::vector<dht_routing_bucket>& s) const
 		dht_routing_bucket b;
 		b.num_nodes = int(i.live_nodes.size());
 		b.num_replacements = int(i.replacements.size());
+
+		b.live_nodes.reserve(i.live_nodes.size());
+		for (auto const& n : i.live_nodes)
+		{
+			dht_routing_node rn;
+			rn.id = n.id;
+			rn.ep = n.ep();  // get the udp::endpoint
+			rn.rtt = n.rtt;
+			b.live_nodes.push_back(std::move(rn));
+		}
+
+		b.replacement_nodes.reserve(i.replacements.size());
+		for (auto const& n : i.replacements)
+		{
+			dht_routing_node rn;
+			rn.id = n.id;
+			rn.ep = n.ep();
+			rn.rtt = n.rtt;
+			b.replacement_nodes.push_back(std::move(rn));
+		}
+
 		s.push_back(b);
 	}
 }
