@@ -267,6 +267,12 @@ int main(int argc, char* argv[]) {
         std::tm tm = *std::localtime(&now_c);
 
         ses.post_dht_stats();
+
+        // FIXME this always returns 0 DHT nodes
+        // libtorrent::sha1_hash zero_target;
+        // zero_target.clear();
+        // ses.dht_live_nodes(zero_target);
+
         std::vector<libtorrent::alert*> alerts;
         ses.pop_alerts(&alerts);
 
@@ -299,6 +305,22 @@ int main(int argc, char* argv[]) {
                     }
                     break;
                 }
+                // FIXME this always returns 0 DHT nodes
+                // case libtorrent::dht_live_nodes_alert::alert_type: {
+                //     auto* ln = libtorrent::alert_cast<libtorrent::dht_live_nodes_alert>(a);
+                //     auto const& nodes = ln->nodes();   // note: method call!
+                //     std::cout << std::put_time(&tm, "%F %T")
+                //             << " [DHT live nodes] " << nodes.size() << " nodes:" << std::endl;
+                //     for (auto const& n : nodes) {
+                //         auto const& id = n.first;
+                //         auto const& ep = n.second;
+                //         std::cout << "    " << ep.address().to_string()
+                //                 << ":" << ep.port()
+                //                 << " id=" << id.to_string().substr(0, 8) << "..."
+                //                 << std::endl;
+                //     }
+                //     break;
+                // }
                 case libtorrent::listen_failed_alert::alert_type: {
                     auto* lf = libtorrent::alert_cast<libtorrent::listen_failed_alert>(a);
                     std::cerr << std::put_time(&tm, "%F %T") << " Failed to bind to "
