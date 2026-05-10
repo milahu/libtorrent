@@ -77,6 +77,9 @@ namespace aux {
 
 		void release_files();
 
+		// no. we dont need the granularity?
+		// void release_pieces(std::vector<piece_index_t>);
+
 		void delete_files(remove_flags_t options, storage_error& error);
 
 		std::pair<status_t, std::string> move_storage(std::string const& sp

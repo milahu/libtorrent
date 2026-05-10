@@ -578,6 +578,15 @@ aux::vector<download_priority_t, piece_index_t> file_to_piece_prio(
 		set_need_save_resume(torrent_handle::if_download_progress);
 	}
 
+	void torrent::unverified(piece_index_t const piece)
+	{
+		// TODO is this correct?
+		TORRENT_ASSERT(m_verified.get_bit(piece));
+		--m_num_verified;
+		m_verified.clear_bit(piece);
+		set_need_save_resume(torrent_handle::if_download_progress);
+	}
+
 	void torrent::start()
 	{
 		TORRENT_ASSERT(is_single_thread());
@@ -2379,6 +2388,13 @@ aux::vector<download_priority_t, piece_index_t> file_to_piece_prio(
 
 	void torrent::force_recheck()
 	{
+		// recheck all pieces
+		force_recheck_pieces(std::vector<piece_index_t>{});
+	}
+
+	// TODO pass "pieces" by reference?
+	void torrent::force_recheck_pieces(std::vector<piece_index_t> const& pieces)
+	{
 		INVARIANT_CHECK;
 
 		if (!valid_metadata()) return;
@@ -2422,6 +2438,24 @@ aux::vector<download_priority_t, piece_index_t> file_to_piece_prio(
 
 		TORRENT_ASSERT(m_outstanding_check_files == false);
 		m_add_torrent_params.reset();
+
+		if (pieces.size() > 0) {
+			// recheck some pieces
+
+			// this will clear the stat cache, to make us actually query the
+			// filesystem for files again
+			// no. we dont need the granularity?
+			// m_ses.disk_thread().async_release_pieces(m_storage, pieces);
+			m_ses.disk_thread().async_release_files(m_storage);
+
+			m_ses.disk_thread().async_check_pieces(m_storage, pieces, nullptr
+				, {}, [self = shared_from_this()](status_t st, storage_error const& error)
+				{ self->on_force_recheck(st, error); });
+			m_ses.deferred_submit_jobs();
+			return;
+		}
+
+		// recheck all pieces
 
 		// this will clear the stat cache, to make us actually query the
 		// filesystem for files again
@@ -5631,6 +5665,68 @@ namespace {
 
 		TORRENT_ASSERT(m_picker);
 		m_picker->piece_priorities(*pieces);
+	}
+
+	// void torrent::forget_pieces(piece_index_t first, piece_index_t last)
+	// {
+	// 	for (piece_index_t p = first; p <= last; ++p)
+	// 	{
+	// 		if (!has_piece(p)) continue;
+
+	// 		m_picker->we_dont_have(p);
+	// 		m_have_pieces.clear_bit(p);
+
+	// 		update_piece_state(p);
+	// 	}
+
+	// 	update_gauge();
+	// 	state_updated();
+	// }
+
+	void torrent::forget_pieces(std::vector<piece_index_t> const& pieces)
+	{
+		INVARIANT_CHECK;
+		TORRENT_ASSERT(valid_metadata());
+		if (!valid_metadata()) return;
+		need_picker();
+		bool const was_finished = is_finished();
+		for (piece_index_t const piece : pieces)
+		{
+			if (!have_piece(piece)) {
+				continue;
+			}
+
+			// FIXME m_have_pieces is a member of peer_connection
+			// remove have state
+			// m_have_pieces.clear_bit(piece);
+
+			// update picker state
+			if (has_picker() && m_picker->have_piece(piece))
+			{
+				m_picker->we_dont_have(piece);
+				// update_gauge();
+			}
+			// piece is no longer verified
+			unverified(piece);
+			// notify peers via FAST extension
+			// based on torrent::piece_failed
+			for (auto p : m_connections)
+			{
+				TORRENT_INCREMENT(m_iterating_connections);
+				// send reject messages for
+				// potential outstanding requests to this piece
+				p->reject_piece(piece);
+				// let peers that support the dont-have message
+				// know that we don't actually have this piece
+				p->write_dont_have(piece);
+			}
+		}
+		update_gauge();
+		update_want_tick();
+		set_need_save_resume(torrent_handle::if_config_changed);
+		update_peer_interest(was_finished);
+		state_updated();
+		update_state_list();
 	}
 
 	namespace

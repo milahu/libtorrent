@@ -69,8 +69,13 @@ namespace aux {
 		, hash2
 		, move_storage
 		, release_files
+		// no. we dont need the granularity?
+		// aux::job_action_t::release_pieces
+		// , release_pieces
 		, delete_files
 		, check_fastresume
+		// aux::job_action_t::check_pieces
+		, check_pieces
 		, rename_file
 		, stop_torrent
 		, file_priority
@@ -126,6 +131,8 @@ namespace aux {
 
 		// the disk storage this job applies to (if applicable)
 		std::shared_ptr<mmap_storage> storage;
+
+		std::vector<piece_index_t> pieces;
 
 		// this is called when operation completes
 

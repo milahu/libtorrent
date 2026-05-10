@@ -194,9 +194,20 @@ struct TORRENT_EXTRA_EXPORT mmap_disk_io final
 		, std::function<void(status_t, std::string const&, storage_error const&)> handler) override;
 	void async_release_files(storage_index_t storage
 		, std::function<void()> handler = std::function<void()>()) override;
+	// no. we dont need the granularity?
+	/*
+	void async_release_pieces(storage_index_t storage
+		, std::vector<piece_index_t> const& pieces
+		, std::function<void()> handler = std::function<void()>()) override;
+	*/
 	void async_delete_files(storage_index_t storage, remove_flags_t options
 		, std::function<void(storage_error const&)> handler) override;
 	void async_check_files(storage_index_t storage
+		, add_torrent_params const* resume_data
+		, aux::vector<std::string, file_index_t> links
+		, std::function<void(status_t, storage_error const&)> handler) override;
+	void async_check_pieces(storage_index_t storage
+		, std::vector<piece_index_t> const& pieces
 		, add_torrent_params const* resume_data
 		, aux::vector<std::string, file_index_t> links
 		, std::function<void(status_t, storage_error const&)> handler) override;
@@ -916,6 +927,22 @@ TORRENT_EXPORT std::unique_ptr<disk_interface> mmap_disk_io_constructor(
 		add_fence_job(j);
 	}
 
+	// no. we dont need the granularity?
+	/*
+	void mmap_disk_io::async_release_pieces(storage_index_t const storage
+		, std::vector<piece_index_t> const& pieces
+		, std::function<void()> handler)
+	{
+		// TODO implement: release only some pieces
+		aux::mmap_disk_job* j = m_job_pool.allocate_job(aux::job_action_t::release_pieces);
+		j->storage = m_torrents[storage]->shared_from_this();
+		j->pieces = pieces;
+		j->callback = std::move(handler);
+
+		add_fence_job(j);
+	}
+	*/
+
 	void mmap_disk_io::abort_hash_jobs(storage_index_t const storage)
 	{
 		// abort outstanding hash jobs belonging to this torrent
@@ -956,6 +983,28 @@ TORRENT_EXPORT std::unique_ptr<disk_interface> mmap_disk_io_constructor(
 		aux::mmap_disk_job* j = m_job_pool.allocate_job(aux::job_action_t::check_fastresume);
 		j->storage = m_torrents[storage]->shared_from_this();
 		j->argument = resume_data;
+		j->callback = std::move(handler);
+
+		aux::vector<std::string, file_index_t>* links_vector = nullptr;
+		if (!links.empty()) links_vector = new aux::vector<std::string, file_index_t>(std::move(links));
+		j->d.links = links_vector;
+
+		add_fence_job(j);
+	}
+
+	void mmap_disk_io::async_check_pieces(storage_index_t const storage
+		, std::vector<piece_index_t> const& pieces
+		, add_torrent_params const* resume_data
+		, aux::vector<std::string, file_index_t> links
+		, std::function<void(status_t, storage_error const&)> handler)
+	{
+		// TODO implement: check only some pieces
+
+		// aux::mmap_disk_job* j = m_job_pool.allocate_job(aux::job_action_t::check_fastresume);
+		aux::mmap_disk_job* j = m_job_pool.allocate_job(aux::job_action_t::check_pieces);
+		j->storage = m_torrents[storage]->shared_from_this();
+		j->argument = resume_data;
+		j->pieces = pieces;
 		j->callback = std::move(handler);
 
 		aux::vector<std::string, file_index_t>* links_vector = nullptr;

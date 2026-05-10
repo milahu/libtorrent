@@ -425,6 +425,11 @@ namespace libtorrent {
 		async_call(&torrent::force_recheck);
 	}
 
+	void torrent_handle::force_recheck_pieces(std::vector<piece_index_t> pieces) const
+	{
+		async_call(&torrent::force_recheck_pieces, pieces);
+	}
+
 	void torrent_handle::resume() const
 	{
 		async_call(&torrent::resume);
@@ -582,6 +587,11 @@ namespace libtorrent {
 		return ret;
 	}
 #endif
+
+	void torrent_handle::forget_pieces(std::vector<piece_index_t> pieces) const
+	{
+		async_call(&torrent::forget_pieces, pieces);
+	}
 
 	void torrent_handle::file_priority(file_index_t index, download_priority_t priority) const
 	{

@@ -633,6 +633,8 @@ namespace libtorrent {
 		void prioritize_pieces(aux::vector<download_priority_t, piece_index_t> const& pieces);
 		void prioritize_piece_list(std::vector<std::pair<piece_index_t, download_priority_t>> const& pieces);
 		void piece_priorities(aux::vector<download_priority_t, piece_index_t>*) const;
+		void forget_pieces(std::vector<piece_index_t> const& pieces);
+		void force_recheck_pieces(std::vector<piece_index_t> const& pieces);
 
 		void set_file_priority(file_index_t index, download_priority_t priority);
 		download_priority_t file_priority(file_index_t index) const;
@@ -1194,6 +1196,7 @@ namespace libtorrent {
 		bool verified_piece(piece_index_t piece) const
 		{ return m_verified.get_bit(piece); }
 		void verified(piece_index_t piece);
+		void unverified(piece_index_t piece);
 
 		// this is called once periodically for torrents
 		// that are not private

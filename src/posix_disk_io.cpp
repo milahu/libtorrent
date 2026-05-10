@@ -282,6 +282,20 @@ namespace {
 			post(m_ios, [=]{ handler(); });
 		}
 
+		// no. we dont need the granularity?
+		/*
+		void async_release_pieces(storage_index_t storage
+			, std::vector<piece_index_t> const& pieces
+			, std::function<void()> handler) override
+		{
+			// TODO implement: release only some pieces
+			posix_storage* st = m_torrents[storage].get();
+			st->release_pieces();
+			if (!handler) return;
+			post(m_ios, [=]{ handler(); });
+		}
+		*/
+
 		void async_delete_files(storage_index_t storage, remove_flags_t const options
 			, std::function<void(storage_error const&)> handler) override
 		{
@@ -296,6 +310,51 @@ namespace {
 			, aux::vector<std::string, file_index_t> links
 			, std::function<void(status_t, storage_error const&)> handler) override
 		{
+			posix_storage* st = m_torrents[storage].get();
+
+			add_torrent_params tmp;
+			add_torrent_params const* rd = resume_data ? resume_data : &tmp;
+
+			storage_error error;
+			status_t const ret = [&]
+			{
+				auto const ret_flag = st->initialize(m_settings, error);
+				if (error) return status_t::fatal_disk_error | ret_flag;
+
+				bool const verify_success = st->verify_resume_data(*rd
+					, std::move(links), error);
+
+				if (m_settings.get_bool(settings_pack::no_recheck_incomplete_resume))
+					return status_t::no_error | ret_flag;
+
+				if (!aux::contains_resume_data(*rd))
+				{
+					// if we don't have any resume data, we still may need to trigger a
+					// full re-check, if there are *any* files.
+					storage_error ignore;
+					return ((st->has_any_file(ignore))
+						? status_t::need_full_check
+						: status_t::no_error)
+						| ret_flag;
+				}
+
+				return (verify_success
+					? status_t::no_error
+					: status_t::need_full_check)
+					| ret_flag;
+			}();
+
+			post(m_ios, [error, ret, h = std::move(handler)]{ h(ret, error); });
+		}
+
+		void async_check_pieces(storage_index_t storage
+			, std::vector<piece_index_t> const& pieces
+			, add_torrent_params const* resume_data
+			, aux::vector<std::string, file_index_t> links
+			, std::function<void(status_t, storage_error const&)> handler) override
+		{
+			// TODO implement: check only some pieces
+
 			posix_storage* st = m_torrents[storage].get();
 
 			add_torrent_params tmp;

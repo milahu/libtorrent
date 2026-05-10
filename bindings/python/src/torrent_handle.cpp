@@ -160,6 +160,18 @@ void prioritize_pieces(torrent_handle& info, object o)
    }
 }
 
+void forget_pieces(torrent_handle& th, object o)
+{
+   stl_input_iterator<piece_index_t> begin(o), end;
+   th.forget_pieces(std::vector<piece_index_t>(begin, end));
+}
+
+void force_recheck_pieces(torrent_handle& th, object o)
+{
+   stl_input_iterator<piece_index_t> begin(o), end;
+   th.force_recheck_pieces(std::vector<piece_index_t>(begin, end));
+}
+
 void prioritize_files(torrent_handle& info, object o)
 {
    stl_input_iterator<download_priority_t> begin(o), end;
@@ -530,6 +542,7 @@ void bind_torrent_handle()
         .def("piece_priority", _(piece_priority1))
         .def("prioritize_pieces", &prioritize_pieces)
         .def("get_piece_priorities", &piece_priorities)
+        .def("forget_pieces", &forget_pieces)
         .def("prioritize_files", &prioritize_files)
         .def("get_file_priorities", &file_priorities)
         .def("file_priority", &file_priority0)
@@ -558,6 +571,7 @@ void bind_torrent_handle()
         .def("info_hash", _(&torrent_handle::info_hash))
         .def("info_hashes", _(&torrent_handle::info_hashes))
         .def("force_recheck", _(&torrent_handle::force_recheck))
+        .def("force_recheck_pieces", &force_recheck_pieces)
         .def("rename_file", _(rename_file0))
         .def("set_ssl_certificate_buffer", &torrent_handle::set_ssl_certificate_buffer, (arg("cert"), arg("private_key"), arg("dh_params")))
         .def("set_ssl_certificate", &torrent_handle::set_ssl_certificate, (arg("cert"), arg("private_key"), arg("dh_params"), arg("passphrase")=""))

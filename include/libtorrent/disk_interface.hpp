@@ -253,6 +253,14 @@ namespace file_open_mode {
 		virtual void async_release_files(storage_index_t storage
 			, std::function<void()> handler = std::function<void()>()) = 0;
 
+		// no. we dont need the granularity?
+		/*
+		// similar to async_release_files
+		virtual void async_release_pieces(storage_index_t storage
+			, std::vector<piece_index_t> const& pieces
+			, std::function<void()> handler = std::function<void()>()) = 0;
+		*/
+
 		// this is called when torrents are added to validate their resume data
 		// against the files on disk. This function is expected to do a few things:
 		//
@@ -275,6 +283,13 @@ namespace file_open_mode {
 		// should exist on disk, this should be verified. Pad files and files
 		// with zero priority may be skipped.
 		virtual void async_check_files(storage_index_t storage
+			, add_torrent_params const* resume_data
+			, aux::vector<std::string, file_index_t> links
+			, std::function<void(status_t, storage_error const&)> handler) = 0;
+
+		// similar to async_check_files
+		virtual void async_check_pieces(storage_index_t storage
+			, std::vector<piece_index_t> const& pieces
 			, add_torrent_params const* resume_data
 			, aux::vector<std::string, file_index_t> links
 			, std::function<void(status_t, storage_error const&)> handler) = 0;

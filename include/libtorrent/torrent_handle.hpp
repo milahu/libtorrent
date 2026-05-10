@@ -1111,6 +1111,8 @@ namespace aux {
 		void prioritize_pieces(std::vector<download_priority_t> const& pieces) const;
 		void prioritize_pieces(std::vector<std::pair<piece_index_t, download_priority_t>> const& pieces) const;
 		std::vector<download_priority_t> get_piece_priorities() const;
+		void forget_pieces(std::vector<piece_index_t> pieces) const;
+		void force_recheck_pieces(std::vector<piece_index_t> pieces) const;
 
 #if TORRENT_ABI_VERSION == 1
 		TORRENT_DEPRECATED

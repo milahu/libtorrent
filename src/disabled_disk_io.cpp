@@ -127,6 +127,16 @@ struct TORRENT_EXTRA_EXPORT disabled_disk_io final
 		post(m_ios, [h = std::move(handler)] { h(); });
 	}
 
+	// no. we dont need the granularity?
+	/*
+	void async_release_pieces(storage_index_t
+		, std::vector<piece_index_t> const&
+		, std::function<void()> handler) override
+	{
+		post(m_ios, [h = std::move(handler)] { h(); });
+	}
+	*/
+
 	void async_delete_files(storage_index_t
 		, remove_flags_t, std::function<void(storage_error const&)> handler) override
 	{
@@ -134,6 +144,15 @@ struct TORRENT_EXTRA_EXPORT disabled_disk_io final
 	}
 
 	void async_check_files(storage_index_t
+		, add_torrent_params const*
+		, aux::vector<std::string, file_index_t>
+		, std::function<void(status_t, storage_error const&)> handler) override
+	{
+		post(m_ios, [h = std::move(handler)] { h(status_t::no_error, storage_error{}); });
+	}
+
+	void async_check_pieces(storage_index_t
+		, std::vector<piece_index_t> const&
 		, add_torrent_params const*
 		, aux::vector<std::string, file_index_t>
 		, std::function<void(status_t, storage_error const&)> handler) override
